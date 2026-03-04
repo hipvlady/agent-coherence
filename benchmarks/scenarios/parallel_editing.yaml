@@ -1,0 +1,36 @@
+simulation:
+  duration_ticks: 120
+  num_agents: 8
+  seed: 2026030403
+  action_probability: 0.85
+network:
+  latency_ticks: 2
+  message_loss_rate: 0.0
+scenario:
+  name: parallel-editing
+  workload: parallel_editing
+  action_probability: 0.85
+  write_probability: 0.55
+artifacts:
+  - id: plan.md
+    size_tokens: 1400
+    volatility: 0.7
+    initial_version: 1
+    mutable: true
+  - id: analysis.json
+    size_tokens: 1000
+    volatility: 0.5
+    initial_version: 1
+    mutable: true
+strategies:
+  eager: {}
+  lazy:
+    check_interval_ticks: 1
+  lease:
+    default_ttl_ticks: 8
+  access_count:
+    max_accesses: 5
+transient:
+  timeout_ticks: 4
+context_semantics:
+  model: conditional_injection

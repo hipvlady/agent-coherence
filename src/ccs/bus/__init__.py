@@ -1,0 +1,5 @@
+"""Event channel abstractions for invalidation/update propagation."""
+
+from .event_bus import ArtifactUpdateEvent, InMemoryEventBus
+
+__all__ = ["InMemoryEventBus", "ArtifactUpdateEvent"]

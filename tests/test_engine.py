@@ -42,6 +42,12 @@ def _scenario() -> dict:
     }
 
 
+def _scenario_with_model(model: str) -> dict:
+    scenario = _scenario()
+    scenario["context_semantics"]["model"] = model
+    return scenario
+
+
 def test_engine_run_returns_coherence_metrics() -> None:
     metrics = SimulationEngine(_scenario(), strategy_name="lazy", seed=5).run()
 
@@ -85,3 +91,44 @@ def test_strategy_comparison_returns_dashboard_contract() -> None:
     assert payload["strategies"] == ["eager", "lazy"]
     assert len(payload["runs"]) == 4
     assert len(payload["aggregated"]) == 2
+
+
+def test_same_seed_is_deterministic_for_engine_outputs() -> None:
+    first = SimulationEngine(_scenario(), strategy_name="lazy", seed=123).run().to_dict()
+    second = SimulationEngine(_scenario(), strategy_name="lazy", seed=123).run().to_dict()
+
+    assert first == second
+
+
+def test_engine_uses_agent_runtime_map_instead_of_legacy_cache_map() -> None:
+    engine = SimulationEngine(_scenario(), strategy_name="lazy", seed=5)
+
+    assert hasattr(engine, "_runtime_by_agent")
+    assert not hasattr(engine, "_cache_by_agent")
+
+
+def test_engine_reports_transient_timeouts_when_messages_are_delayed() -> None:
+    scenario = _scenario()
+    scenario["network"]["latency_ticks"] = 8
+    scenario["simulation"]["duration_ticks"] = 12
+    scenario["scenario"]["write_probability"] = 1.0
+    scenario["scenario"]["action_probability"] = 1.0
+    scenario["transient"]["timeout_ticks"] = 1
+
+    metrics = SimulationEngine(scenario, strategy_name="lazy", seed=17).run()
+    assert metrics.transient_state_timeouts >= 1
+
+
+def test_always_read_forces_more_fetches_than_conditional() -> None:
+    always = SimulationEngine(_scenario_with_model("always_read"), strategy_name="lazy", seed=22).run()
+    conditional = SimulationEngine(_scenario_with_model("conditional_injection"), strategy_name="lazy", seed=22).run()
+
+    assert always.fetch_actions >= conditional.fetch_actions
+    assert always.tokens_fetch >= conditional.tokens_fetch
+
+
+def test_pointer_model_reduces_eager_broadcast_token_cost() -> None:
+    pointer = SimulationEngine(_scenario_with_model("pointer"), strategy_name="eager", seed=31).run()
+    conditional = SimulationEngine(_scenario_with_model("conditional_injection"), strategy_name="eager", seed=31).run()
+
+    assert pointer.tokens_broadcast <= conditional.tokens_broadcast

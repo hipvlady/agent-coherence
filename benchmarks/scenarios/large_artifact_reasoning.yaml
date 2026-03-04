@@ -1,0 +1,36 @@
+simulation:
+  duration_ticks: 100
+  num_agents: 6
+  seed: 2026030404
+  action_probability: 0.7
+network:
+  latency_ticks: 1
+  message_loss_rate: 0.0
+scenario:
+  name: large-artifact-reasoning
+  workload: large_artifact_reasoning
+  action_probability: 0.7
+  write_probability: 0.2
+artifacts:
+  - id: plan.md
+    size_tokens: 3200
+    volatility: 0.2
+    initial_version: 1
+    mutable: true
+  - id: analysis.json
+    size_tokens: 5400
+    volatility: 0.15
+    initial_version: 1
+    mutable: true
+strategies:
+  eager: {}
+  lazy:
+    check_interval_ticks: 2
+  lease:
+    default_ttl_ticks: 12
+  access_count:
+    max_accesses: 8
+transient:
+  timeout_ticks: 6
+context_semantics:
+  model: conditional_injection

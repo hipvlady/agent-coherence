@@ -9,7 +9,7 @@ import pytest
 from ccs.coordinator.registry import ArtifactRegistry
 from ccs.coordinator.service import CoordinatorService
 from ccs.core.exceptions import CoherenceError
-from ccs.core.states import MESIState
+from ccs.core.states import MESIState, TransientState
 from ccs.core.types import FetchRequest
 
 
@@ -102,3 +102,77 @@ def test_invalidate_marks_agent_invalid() -> None:
     assert signal.new_version == 2
     assert svc.registry.get_agent_state(artifact.id, agent) == MESIState.INVALID
 
+
+def test_upgrade_flow_grants_exclusive_and_invalidates_peer() -> None:
+    svc = _service()
+    artifact = svc.register_artifact(name="plan.md", content="v1")
+    owner = uuid4()
+    peer = uuid4()
+    svc.fetch(FetchRequest(artifact_id=artifact.id, requesting_agent_id=owner, requested_at_tick=1))
+    svc.fetch(FetchRequest(artifact_id=artifact.id, requesting_agent_id=peer, requested_at_tick=2))
+
+    signals = svc.upgrade(agent_id=owner, artifact_id=artifact.id, issued_at_tick=7)
+
+    assert len(signals) == 1
+    assert signals[0].issued_at_tick == 7
+    assert svc.registry.get_agent_state(artifact.id, owner) == MESIState.EXCLUSIVE
+    assert svc.registry.get_agent_state(artifact.id, peer) == MESIState.INVALID
+
+
+def test_fetch_raises_coherence_error_when_content_missing() -> None:
+    svc = _service()
+    artifact = svc.register_artifact(name="plan.md", content="v1")
+    svc.registry.set_artifact_and_content(artifact.id, artifact, None)  # type: ignore[arg-type]
+
+    with pytest.raises(CoherenceError):
+        svc.fetch(
+            FetchRequest(
+                artifact_id=artifact.id,
+                requesting_agent_id=uuid4(),
+                requested_at_tick=1,
+            )
+        )
+
+
+def test_write_and_commit_propagate_issued_tick_in_signals() -> None:
+    svc = _service()
+    artifact = svc.register_artifact(name="plan.md", content="v1")
+    owner = uuid4()
+    peer = uuid4()
+    svc.fetch(FetchRequest(artifact_id=artifact.id, requesting_agent_id=owner, requested_at_tick=1))
+    svc.fetch(FetchRequest(artifact_id=artifact.id, requesting_agent_id=peer, requested_at_tick=2))
+
+    write_signals = svc.write(agent_id=owner, artifact_id=artifact.id, issued_at_tick=11)
+    assert write_signals
+    assert all(signal.issued_at_tick == 11 for signal in write_signals)
+
+    updated, commit_signals = svc.commit(
+        agent_id=owner,
+        artifact_id=artifact.id,
+        content="v2",
+        issued_at_tick=13,
+    )
+    assert updated.version == 2
+    assert all(signal.issued_at_tick == 13 for signal in commit_signals)
+
+
+def test_peer_transient_lifecycle_set_on_write_and_cleared_on_invalidate_ack() -> None:
+    svc = _service()
+    artifact = svc.register_artifact(name="plan.md", content="v1")
+    owner = uuid4()
+    peer = uuid4()
+    svc.fetch(FetchRequest(artifact_id=artifact.id, requesting_agent_id=owner, requested_at_tick=1))
+    svc.fetch(FetchRequest(artifact_id=artifact.id, requesting_agent_id=peer, requested_at_tick=2))
+
+    svc.write(agent_id=owner, artifact_id=artifact.id, issued_at_tick=5)
+    assert svc.registry.get_agent_transient(artifact.id, peer) == TransientState.SIA
+    assert svc.registry.get_transient_tick(artifact.id, peer) == 5
+
+    svc.invalidate(
+        agent_id=peer,
+        artifact_id=artifact.id,
+        new_version=2,
+        issuer_agent_id=owner,
+        issued_at_tick=6,
+    )
+    assert svc.registry.get_agent_transient(artifact.id, peer) is None

@@ -9,9 +9,11 @@ from typing import Iterable
 
 _LAYER_BY_NAMESPACE = {
     "core": "core",
+    "artifacts": "core",
     "coordinator": "application",
     "strategies": "application",
     "agent": "application",
+    "bus": "infrastructure",
     "transport": "infrastructure",
     "simulation": "infrastructure",
     "output": "interface",

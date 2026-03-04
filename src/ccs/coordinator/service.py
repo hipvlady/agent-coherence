@@ -6,7 +6,7 @@ from uuid import UUID
 
 from ccs.core.exceptions import CoherenceError
 from ccs.core.invariants import check_monotonic_version, check_single_writer
-from ccs.core.states import MESIState
+from ccs.core.states import MESIState, TransientState
 from ccs.core.types import Artifact, FetchRequest, FetchResponse, InvalidationSignal
 
 from .registry import ArtifactRegistry
@@ -45,7 +45,8 @@ class CoordinatorService:
         """Fetch canonical artifact payload and grant requester state."""
         artifact = self._require_artifact(request.artifact_id)
         content = self.registry.get_content(request.artifact_id)
-        assert content is not None
+        if content is None:
+            raise CoherenceError(f"artifact_content_missing artifact={request.artifact_id}")
 
         state_map = self.registry.get_state_map(request.artifact_id)
         other_holders = [
@@ -55,12 +56,19 @@ class CoordinatorService:
         ]
 
         grant = MESIState.EXCLUSIVE if not other_holders else MESIState.SHARED
+        self.registry.set_agent_transient(
+            request.artifact_id,
+            request.requesting_agent_id,
+            TransientState.IED if grant == MESIState.EXCLUSIVE else TransientState.ISG,
+            entered_tick=request.requested_at_tick,
+        )
         if other_holders:
             # Multiple readers must stay coherent; downgrade any exclusive/modified holder.
             for agent_id in other_holders:
                 self.registry.set_agent_state(request.artifact_id, agent_id, MESIState.SHARED)
 
         self.registry.set_agent_state(request.artifact_id, request.requesting_agent_id, grant)
+        self.registry.clear_agent_transient(request.artifact_id, request.requesting_agent_id)
         self._validate_single_writer(request.artifact_id)
 
         return FetchResponse(
@@ -70,30 +78,57 @@ class CoordinatorService:
             state_grant=grant,
         )
 
-    def write(self, *, agent_id: UUID, artifact_id: UUID) -> list[InvalidationSignal]:
+    def write(
+        self,
+        *,
+        agent_id: UUID,
+        artifact_id: UUID,
+        issued_at_tick: int = 0,
+    ) -> list[InvalidationSignal]:
         """Request write ownership by invalidating peers and granting EXCLUSIVE."""
         artifact = self._require_artifact(artifact_id)
+        self.registry.set_agent_transient(
+            artifact_id,
+            agent_id,
+            TransientState.IED,
+            entered_tick=issued_at_tick,
+        )
         signals: list[InvalidationSignal] = []
         for peer_id, state in self.registry.get_state_map(artifact_id).items():
             if peer_id == agent_id or state == MESIState.INVALID:
                 continue
+            transient = _invalidation_transient_for_state(state)
+            if transient is not None:
+                self.registry.set_agent_transient(
+                    artifact_id,
+                    peer_id,
+                    transient,
+                    entered_tick=issued_at_tick,
+                )
             self.registry.set_agent_state(artifact_id, peer_id, MESIState.INVALID)
             signals.append(
                 InvalidationSignal(
                     artifact_id=artifact_id,
                     new_version=artifact.version,
-                    issued_at_tick=0,
+                    issued_at_tick=issued_at_tick,
                     issuer_agent_id=agent_id,
                 )
             )
 
         self.registry.set_agent_state(artifact_id, agent_id, MESIState.EXCLUSIVE)
+        self.registry.clear_agent_transient(artifact_id, agent_id)
         self._validate_single_writer(artifact_id)
         return signals
 
-    def upgrade(self, *, agent_id: UUID, artifact_id: UUID) -> list[InvalidationSignal]:
+    def upgrade(
+        self,
+        *,
+        agent_id: UUID,
+        artifact_id: UUID,
+        issued_at_tick: int = 0,
+    ) -> list[InvalidationSignal]:
         """Upgrade a shared holder to exclusive owner (alias of write request)."""
-        return self.write(agent_id=agent_id, artifact_id=artifact_id)
+        return self.write(agent_id=agent_id, artifact_id=artifact_id, issued_at_tick=issued_at_tick)
 
     def commit(
         self,
@@ -101,6 +136,7 @@ class CoordinatorService:
         agent_id: UUID,
         artifact_id: UUID,
         content: str,
+        issued_at_tick: int = 0,
         content_hash: str | None = None,
         size_tokens: int | None = None,
     ) -> tuple[Artifact, list[InvalidationSignal]]:
@@ -112,6 +148,12 @@ class CoordinatorService:
                 f"commit_not_allowed agent={agent_id} artifact={artifact_id} state={agent_state}"
             )
 
+        self.registry.set_agent_transient(
+            artifact_id,
+            agent_id,
+            TransientState.MWB,
+            entered_tick=issued_at_tick,
+        )
         next_version = artifact.version + 1
         check_monotonic_version(artifact.version, next_version)
         updated = Artifact(
@@ -133,16 +175,25 @@ class CoordinatorService:
         for peer_id, state in self.registry.get_state_map(artifact_id).items():
             if peer_id == agent_id or state == MESIState.INVALID:
                 continue
+            transient = _invalidation_transient_for_state(state)
+            if transient is not None:
+                self.registry.set_agent_transient(
+                    artifact_id,
+                    peer_id,
+                    transient,
+                    entered_tick=issued_at_tick,
+                )
             self.registry.set_agent_state(artifact_id, peer_id, MESIState.INVALID)
             signals.append(
                 InvalidationSignal(
                     artifact_id=artifact_id,
                     new_version=next_version,
-                    issued_at_tick=0,
+                    issued_at_tick=issued_at_tick,
                     issuer_agent_id=agent_id,
                 )
             )
         self.registry.set_agent_state(artifact_id, agent_id, MESIState.MODIFIED)
+        self.registry.clear_agent_transient(artifact_id, agent_id)
         self._validate_single_writer(artifact_id)
         return updated, signals
 
@@ -158,12 +209,34 @@ class CoordinatorService:
         """Apply invalidation for one agent and return corresponding signal object."""
         self._require_artifact(artifact_id)
         self.registry.set_agent_state(artifact_id, agent_id, MESIState.INVALID)
+        self.registry.clear_agent_transient(artifact_id, agent_id)
         return InvalidationSignal(
             artifact_id=artifact_id,
             new_version=new_version,
             issued_at_tick=issued_at_tick,
             issuer_agent_id=issuer_agent_id,
         )
+
+    def enforce_transient_timeouts(self, *, current_tick: int, timeout_ticks: int) -> int:
+        """Force expired transient entries to INVALID as fail-safe recovery."""
+        if timeout_ticks < 1:
+            raise ValueError("timeout_ticks must be >= 1")
+
+        expired = 0
+        for artifact_id in self.registry.artifact_ids():
+            for agent_id, transient in self.registry.get_transient_map(artifact_id).items():
+                entered = self.registry.get_transient_tick(artifact_id, agent_id)
+                if entered is None:
+                    continue
+                if (current_tick - entered) < timeout_ticks:
+                    continue
+
+                # Conservative fail-safe: transient timeout always forces local invalidation.
+                self.registry.set_agent_state(artifact_id, agent_id, MESIState.INVALID)
+                self.registry.clear_agent_transient(artifact_id, agent_id)
+                expired += 1
+
+        return expired
 
     def _validate_single_writer(self, artifact_id: UUID) -> None:
         check_single_writer(self.registry.get_state_map(artifact_id))
@@ -174,3 +247,12 @@ class CoordinatorService:
             raise CoherenceError(f"artifact_not_found artifact={artifact_id}")
         return artifact
 
+
+def _invalidation_transient_for_state(state: MESIState) -> TransientState | None:
+    if state == MESIState.SHARED:
+        return TransientState.SIA
+    if state == MESIState.EXCLUSIVE:
+        return TransientState.EIA
+    if state == MESIState.MODIFIED:
+        return TransientState.MSA
+    return None

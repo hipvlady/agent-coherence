@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import random
-from dataclasses import replace
 from typing import Any, Mapping, Sequence
 from uuid import UUID
 
+from ccs.agent.runtime import AgentRuntime
 from ccs.coordinator.registry import ArtifactRegistry
 from ccs.coordinator.service import CoordinatorService
 from ccs.core.clock import LogicalClock
 from ccs.core.states import MESIState
-from ccs.core.types import Artifact, ArtifactCacheEntry, FetchRequest, InvalidationSignal
+from ccs.core.types import Artifact, InvalidationSignal
 from ccs.strategies.base import SyncStrategy
 from ccs.strategies.selector import build_strategy
 from ccs.transport.network_sim import NetworkMessage, NetworkSimulator
@@ -21,6 +21,7 @@ from .consistency import ConsistencyMonitor
 from .metrics import SimulationMetrics, StrategyComparisonReport
 
 _INVALIDATION_SIGNAL_TOKENS = 12
+_POINTER_UPDATE_TOKENS = 8
 
 
 class SimulationEngine:
@@ -57,12 +58,17 @@ class SimulationEngine:
         )
 
         self._agent_ids = [UUID(int=i + 1) for i in range(int(simulation["num_agents"]))]
-        self._cache_by_agent: dict[UUID, dict[UUID, ArtifactCacheEntry]] = {
-            agent_id: {} for agent_id in self._agent_ids
-        }
         self._artifact_ids: list[UUID] = []
         self._artifact_specs_by_id: dict[UUID, dict[str, Any]] = {}
         self._register_artifacts()
+        self._runtime_by_agent: dict[UUID, AgentRuntime] = {
+            agent_id: AgentRuntime(
+                agent_id=agent_id,
+                coordinator=self._coordinator,
+                strategy=self._strategy,
+            )
+            for agent_id in self._agent_ids
+        }
 
         # Counters collected into SimulationMetrics at end of run.
         self._total_actions = 0
@@ -79,13 +85,19 @@ class SimulationEngine:
         self._tokens_broadcast = 0
         self._tokens_invalidation = 0
         self._context_injections = 0
+        self._transient_state_timeouts = 0
 
     def run(self) -> SimulationMetrics:
         """Run one deterministic simulation and return collected metrics."""
         duration_ticks = int(self._config["simulation"]["duration_ticks"])
+        timeout_ticks = int(self._config.get("transient", {}).get("timeout_ticks", 5))
         for _ in range(duration_ticks):
             self._deliver_messages()
             self._execute_actions_for_tick()
+            self._transient_state_timeouts += self._coordinator.enforce_transient_timeouts(
+                current_tick=self._clock.now(),
+                timeout_ticks=timeout_ticks,
+            )
             self._clock.advance()
 
         # Drain messages that become due exactly at final tick.
@@ -137,33 +149,43 @@ class SimulationEngine:
 
     def _perform_read(self, *, agent_id: UUID, artifact_id: UUID, now_tick: int) -> None:
         self._read_actions += 1
-        local_cache = self._cache_by_agent[agent_id]
-        entry = local_cache.get(artifact_id)
-
-        if entry is None:
+        runtime = self._runtime_by_agent[agent_id]
+        entry = runtime.cache.get(artifact_id)
+        needs_refresh = (
+            entry is None
+            or self._strategy.requires_refresh(entry, now_tick=now_tick)
+            or self._context_model() == "always_read"
+        )
+        if needs_refresh:
             self._cache_misses += 1
-            self._fetch(agent_id=agent_id, artifact_id=artifact_id, now_tick=now_tick)
-            return
+            self._fetch_actions += 1
+            self._context_injections += 1
+            self._tokens_fetch += self._artifact_token_size(artifact_id)
+        else:
+            self._cache_hits += 1
 
-        if self._strategy.requires_refresh(entry, now_tick=now_tick):
-            self._cache_misses += 1
-            self._fetch(agent_id=agent_id, artifact_id=artifact_id, now_tick=now_tick)
-            return
-
-        canonical = self._registry.get_artifact(artifact_id)
-        assert canonical is not None
-        stale = entry.state != MESIState.INVALID and entry.local_version < canonical.version
-        self._monitor.record_read(agent_id=agent_id, artifact_id=artifact_id, stale=stale)
-        self._cache_hits += 1
-        local_cache[artifact_id] = self._strategy.on_read(entry, now_tick=now_tick)
+        runtime.read(artifact_id, now_tick=now_tick)
+        if not needs_refresh:
+            latest = runtime.cache.get(artifact_id)
+            assert latest is not None
+            canonical = self._registry.get_artifact(artifact_id)
+            assert canonical is not None
+            stale = latest.state != MESIState.INVALID and latest.local_version < canonical.version
+            self._monitor.record_read(agent_id=agent_id, artifact_id=artifact_id, stale=stale)
+            if self._context_model() == "conditional_injection":
+                # Conditional model still injects local artifact content when needed by step.
+                self._context_injections += 1
 
     def _perform_write(self, *, agent_id: UUID, artifact_id: UUID, now_tick: int) -> None:
         self._write_actions += 1
-        local_cache = self._cache_by_agent[agent_id]
-        entry = local_cache.get(artifact_id)
-        if entry is None or self._strategy.requires_refresh(entry, now_tick=now_tick):
+        runtime = self._runtime_by_agent[agent_id]
+        entry = runtime.cache.get(artifact_id)
+        needs_refresh = entry is None or self._strategy.requires_refresh(entry, now_tick=now_tick)
+        if needs_refresh:
             self._cache_misses += 1
-            self._fetch(agent_id=agent_id, artifact_id=artifact_id, now_tick=now_tick)
+            self._fetch_actions += 1
+            self._context_injections += 1
+            self._tokens_fetch += self._artifact_token_size(artifact_id)
 
         peers_to_sync = [
             peer_id
@@ -172,22 +194,15 @@ class SimulationEngine:
         ]
         previous = self._registry.get_artifact(artifact_id)
         assert previous is not None
+        content = f"{previous.name}-v{previous.version + 1}-t{now_tick}"
 
-        self._coordinator.write(agent_id=agent_id, artifact_id=artifact_id)
-        updated, _ = self._coordinator.commit(
-            agent_id=agent_id,
+        updated, _ = runtime.write(
             artifact_id=artifact_id,
-            content=f"{previous.name}-v{previous.version + 1}-t{now_tick}",
+            content=content,
+            now_tick=now_tick,
             size_tokens=previous.size_tokens,
         )
         self._monitor.validate_monotonic(previous.version, updated.version)
-
-        local_cache[artifact_id] = self._strategy.on_fetch(
-            artifact_id=artifact_id,
-            version=updated.version,
-            state=MESIState.MODIFIED,
-            now_tick=now_tick,
-        )
         self._monitor.reset_stale_steps(agent_id=agent_id, artifact_id=artifact_id)
 
         if self._strategy.broadcasts_content_on_commit():
@@ -196,6 +211,7 @@ class SimulationEngine:
                 peers=peers_to_sync,
                 artifact_id=artifact_id,
                 version=updated.version,
+                content=content,
                 now_tick=now_tick,
             )
         elif self._strategy.invalidates_peers_on_commit():
@@ -207,26 +223,6 @@ class SimulationEngine:
                 now_tick=now_tick,
             )
 
-        self._monitor.validate_single_writer(self._registry.get_state_map(artifact_id))
-
-    def _fetch(self, *, agent_id: UUID, artifact_id: UUID, now_tick: int) -> None:
-        response = self._coordinator.fetch(
-            FetchRequest(
-                artifact_id=artifact_id,
-                requesting_agent_id=agent_id,
-                requested_at_tick=now_tick,
-            )
-        )
-        self._fetch_actions += 1
-        self._context_injections += 1
-        self._tokens_fetch += self._artifact_token_size(artifact_id)
-        self._cache_by_agent[agent_id][artifact_id] = self._strategy.on_fetch(
-            artifact_id=artifact_id,
-            version=response.version,
-            state=response.state_grant,
-            now_tick=now_tick,
-        )
-        self._monitor.reset_stale_steps(agent_id=agent_id, artifact_id=artifact_id)
         self._monitor.validate_single_writer(self._registry.get_state_map(artifact_id))
 
     def _emit_invalidations(
@@ -262,6 +258,7 @@ class SimulationEngine:
         peers: Sequence[UUID],
         artifact_id: UUID,
         version: int,
+        content: str,
         now_tick: int,
     ) -> None:
         for peer_id in peers:
@@ -269,6 +266,7 @@ class SimulationEngine:
                 payload={
                     "artifact_id": artifact_id,
                     "version": version,
+                    "content": content,
                     "writer_agent_id": writer_agent_id,
                 },
                 source=writer_agent_id,
@@ -277,7 +275,7 @@ class SimulationEngine:
                 message_type="update",
             )
             self._updates_issued += 1
-            self._tokens_broadcast += self._artifact_token_size(artifact_id)
+            self._tokens_broadcast += self._update_token_size(artifact_id)
             self._context_injections += 1
 
     def _deliver_messages(self) -> None:
@@ -296,26 +294,8 @@ class SimulationEngine:
     def _apply_invalidation(self, message: NetworkMessage) -> None:
         signal = message.payload
         assert isinstance(signal, InvalidationSignal)
-        local_cache = self._cache_by_agent[message.destination]
-        entry = local_cache.get(signal.artifact_id)
-        if entry is None:
-            local_cache[signal.artifact_id] = ArtifactCacheEntry(
-                artifact_id=signal.artifact_id,
-                state=MESIState.INVALID,
-                local_version=max(signal.new_version - 1, 0),
-                access_count=0,
-                acquired_at_tick=signal.issued_at_tick,
-            )
-        else:
-            local_cache[signal.artifact_id] = replace(entry, state=MESIState.INVALID)
-
-        self._coordinator.invalidate(
-            agent_id=message.destination,
-            artifact_id=signal.artifact_id,
-            new_version=signal.new_version,
-            issuer_agent_id=signal.issuer_agent_id,
-            issued_at_tick=signal.issued_at_tick,
-        )
+        runtime = self._runtime_by_agent[message.destination]
+        runtime.handle_invalidation(signal)
         self._monitor.reset_stale_steps(agent_id=message.destination, artifact_id=signal.artifact_id)
         self._invalidations_delivered += 1
         self._monitor.validate_single_writer(self._registry.get_state_map(signal.artifact_id))
@@ -324,17 +304,16 @@ class SimulationEngine:
         payload = message.payload
         artifact_id = payload["artifact_id"]
         version = int(payload["version"])
+        content = str(payload.get("content", ""))
         writer_agent_id = payload["writer_agent_id"]
-        local_cache = self._cache_by_agent[message.destination]
-        local_cache[artifact_id] = self._strategy.on_fetch(
+        runtime = self._runtime_by_agent[message.destination]
+        runtime.handle_update(
             artifact_id=artifact_id,
             version=version,
-            state=MESIState.SHARED,
+            content=content,
             now_tick=self._clock.now(),
+            writer_agent_id=writer_agent_id,
         )
-
-        self._registry.set_agent_state(artifact_id, message.destination, MESIState.SHARED)
-        self._registry.set_agent_state(artifact_id, writer_agent_id, MESIState.SHARED)
         self._monitor.reset_stale_steps(agent_id=message.destination, artifact_id=artifact_id)
         self._updates_delivered += 1
         self._monitor.validate_single_writer(self._registry.get_state_map(artifact_id))
@@ -343,6 +322,15 @@ class SimulationEngine:
         artifact = self._registry.get_artifact(artifact_id)
         assert artifact is not None
         return int(artifact.size_tokens or 1)
+
+    def _update_token_size(self, artifact_id: UUID) -> int:
+        if self._context_model() == "pointer":
+            return _POINTER_UPDATE_TOKENS
+        return self._artifact_token_size(artifact_id)
+
+    def _context_model(self) -> str:
+        context_semantics = self._config.get("context_semantics", {})
+        return str(context_semantics.get("model", "conditional_injection"))
 
     def _choose_artifact_id(self) -> UUID:
         workload = self._config["scenario"]["workload"]
@@ -393,6 +381,7 @@ class SimulationEngine:
             tokens_broadcast=self._tokens_broadcast,
             tokens_invalidation=self._tokens_invalidation,
             context_injections=self._context_injections,
+            transient_state_timeouts=self._transient_state_timeouts,
         )
 
 

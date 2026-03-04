@@ -1,0 +1,101 @@
+{
+  "generated_on": "2026-03-04",
+  "runs_per_strategy": 10,
+  "scenarios": [
+    {
+      "context_model": "conditional_injection",
+      "output_html": "benchmarks/results/step5/read_heavy.html",
+      "output_json": "benchmarks/results/step5/read_heavy.json",
+      "runs_per_strategy": 10,
+      "scenario_file": "benchmarks/scenarios/read_heavy.yaml",
+      "scenario_name": "read-heavy",
+      "seed_start": 2026030401,
+      "strategies": [
+        "eager",
+        "lazy"
+      ]
+    },
+    {
+      "context_model": "conditional_injection",
+      "output_html": "benchmarks/results/step5/write_heavy.html",
+      "output_json": "benchmarks/results/step5/write_heavy.json",
+      "runs_per_strategy": 10,
+      "scenario_file": "benchmarks/scenarios/write_heavy.yaml",
+      "scenario_name": "write-heavy",
+      "seed_start": 2026030402,
+      "strategies": [
+        "eager",
+        "lazy"
+      ]
+    },
+    {
+      "context_model": "conditional_injection",
+      "output_html": "benchmarks/results/step5/parallel_editing.html",
+      "output_json": "benchmarks/results/step5/parallel_editing.json",
+      "runs_per_strategy": 10,
+      "scenario_file": "benchmarks/scenarios/parallel_editing.yaml",
+      "scenario_name": "parallel-editing",
+      "seed_start": 2026030403,
+      "strategies": [
+        "eager",
+        "lazy"
+      ]
+    },
+    {
+      "context_model": "conditional_injection",
+      "output_html": "benchmarks/results/step5/large_artifact_reasoning.html",
+      "output_json": "benchmarks/results/step5/large_artifact_reasoning.json",
+      "runs_per_strategy": 10,
+      "scenario_file": "benchmarks/scenarios/large_artifact_reasoning.yaml",
+      "scenario_name": "large-artifact-reasoning",
+      "seed_start": 2026030404,
+      "strategies": [
+        "eager",
+        "lazy"
+      ]
+    },
+    {
+      "context_model": "always_read",
+      "output_html": "benchmarks/results/step5/access_always_read.html",
+      "output_json": "benchmarks/results/step5/access_always_read.json",
+      "runs_per_strategy": 10,
+      "scenario_file": "benchmarks/scenarios/access_always_read.yaml",
+      "scenario_name": "access-always-read",
+      "seed_start": 2026030411,
+      "strategies": [
+        "eager",
+        "lazy"
+      ]
+    },
+    {
+      "context_model": "conditional_injection",
+      "output_html": "benchmarks/results/step5/access_conditional_injection.html",
+      "output_json": "benchmarks/results/step5/access_conditional_injection.json",
+      "runs_per_strategy": 10,
+      "scenario_file": "benchmarks/scenarios/access_conditional_injection.yaml",
+      "scenario_name": "access-conditional-injection",
+      "seed_start": 2026030412,
+      "strategies": [
+        "eager",
+        "lazy"
+      ]
+    },
+    {
+      "context_model": "pointer",
+      "output_html": "benchmarks/results/step5/access_pointer.html",
+      "output_json": "benchmarks/results/step5/access_pointer.json",
+      "runs_per_strategy": 10,
+      "scenario_file": "benchmarks/scenarios/access_pointer.yaml",
+      "scenario_name": "access-pointer",
+      "seed_start": 2026030413,
+      "strategies": [
+        "eager",
+        "lazy"
+      ]
+    }
+  ],
+  "strategies": [
+    "eager",
+    "lazy"
+  ]
+}
