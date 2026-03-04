@@ -1,10 +1,10 @@
-"""Aggregation utilities for multi-run strategy comparisons."""
+"""Aggregation utilities for multi-run coherence strategy comparisons."""
 
 from __future__ import annotations
 
 import statistics
-from dataclasses import dataclass
-from typing import Iterable, Sequence
+from dataclasses import asdict, dataclass
+from typing import Any, Iterable, Sequence
 
 from .metrics import SimulationMetrics
 
@@ -21,61 +21,65 @@ def _std(values: Sequence[float]) -> float:
 
 @dataclass(frozen=True)
 class AggregatedMetrics:
-    """Aggregated per-strategy values across repeated runs."""
+    """Aggregated per-strategy metrics across repeated runs."""
 
     strategy: str
     runs: int
-    unauthorized_mean: float
-    unauthorized_std: float
-    p50_mean: float
-    p50_std: float
-    p99_mean: float
-    p99_std: float
-    staleness_max_mean: float
-    staleness_max_std: float
-    convergence_mean: float
-    convergence_std: float
+    synchronization_tokens_mean: float
+    synchronization_tokens_std: float
+    fetch_tokens_mean: float
+    fetch_tokens_std: float
+    broadcast_tokens_mean: float
+    broadcast_tokens_std: float
+    invalidation_tokens_mean: float
+    invalidation_tokens_std: float
+    cache_hit_rate_mean: float
+    cache_hit_rate_std: float
+    stale_reads_mean: float
+    stale_reads_std: float
+    max_stale_steps_mean: float
+    max_stale_steps_std: float
+    staleness_bound_violations_mean: float
+    staleness_bound_violations_std: float
+    crr_mean: float
+    crr_std: float
+    invalidation_efficiency_mean: float
+    invalidation_efficiency_std: float
     message_overhead_mean: float
     message_overhead_std: float
-    revalidations_mean: float
-    revalidations_std: float
-    transient_timeouts_mean: float
-    transient_timeouts_std: float
-    unauthorized_by_depth_mean: dict[int, float]
-    unauthorized_by_depth_std: dict[int, float]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return JSON-safe dictionary payload."""
+        return asdict(self)
 
 
 def aggregate_strategy_runs(strategy: str, runs: Sequence[SimulationMetrics]) -> AggregatedMetrics:
     """Aggregate one strategy across repeated simulation runs."""
-    depth_values: dict[int, list[float]] = {}
-    for metrics in runs:
-        for depth in metrics.unauthorized_actions_by_depth.keys():
-            depth_values.setdefault(depth, [])
-    for depth in depth_values:
-        for metrics in runs:
-            depth_values[depth].append(float(metrics.unauthorized_actions_by_depth.get(depth, 0)))
-
     return AggregatedMetrics(
         strategy=strategy,
         runs=len(runs),
-        unauthorized_mean=_mean([float(m.unauthorized_actions_count) for m in runs]),
-        unauthorized_std=_std([float(m.unauthorized_actions_count) for m in runs]),
-        p50_mean=_mean([m.revocation_latency_p50 for m in runs]),
-        p50_std=_std([m.revocation_latency_p50 for m in runs]),
-        p99_mean=_mean([m.revocation_latency_p99 for m in runs]),
-        p99_std=_std([m.revocation_latency_p99 for m in runs]),
-        staleness_max_mean=_mean([float(m.staleness_window_max) for m in runs]),
-        staleness_max_std=_std([float(m.staleness_window_max) for m in runs]),
-        convergence_mean=_mean([m.convergence_time for m in runs]),
-        convergence_std=_std([m.convergence_time for m in runs]),
+        synchronization_tokens_mean=_mean([float(m.synchronization_tokens) for m in runs]),
+        synchronization_tokens_std=_std([float(m.synchronization_tokens) for m in runs]),
+        fetch_tokens_mean=_mean([float(m.tokens_fetch) for m in runs]),
+        fetch_tokens_std=_std([float(m.tokens_fetch) for m in runs]),
+        broadcast_tokens_mean=_mean([float(m.tokens_broadcast) for m in runs]),
+        broadcast_tokens_std=_std([float(m.tokens_broadcast) for m in runs]),
+        invalidation_tokens_mean=_mean([float(m.tokens_invalidation) for m in runs]),
+        invalidation_tokens_std=_std([float(m.tokens_invalidation) for m in runs]),
+        cache_hit_rate_mean=_mean([m.cache_hit_rate for m in runs]),
+        cache_hit_rate_std=_std([m.cache_hit_rate for m in runs]),
+        stale_reads_mean=_mean([float(m.stale_reads) for m in runs]),
+        stale_reads_std=_std([float(m.stale_reads) for m in runs]),
+        max_stale_steps_mean=_mean([float(m.max_stale_steps) for m in runs]),
+        max_stale_steps_std=_std([float(m.max_stale_steps) for m in runs]),
+        staleness_bound_violations_mean=_mean([float(m.staleness_bound_violations) for m in runs]),
+        staleness_bound_violations_std=_std([float(m.staleness_bound_violations) for m in runs]),
+        crr_mean=_mean([m.crr for m in runs]),
+        crr_std=_std([m.crr for m in runs]),
+        invalidation_efficiency_mean=_mean([m.invalidation_efficiency for m in runs]),
+        invalidation_efficiency_std=_std([m.invalidation_efficiency for m in runs]),
         message_overhead_mean=_mean([float(m.message_overhead) for m in runs]),
         message_overhead_std=_std([float(m.message_overhead) for m in runs]),
-        revalidations_mean=_mean([float(m.revalidation_count) for m in runs]),
-        revalidations_std=_std([float(m.revalidation_count) for m in runs]),
-        transient_timeouts_mean=_mean([float(m.transient_state_timeouts) for m in runs]),
-        transient_timeouts_std=_std([float(m.transient_state_timeouts) for m in runs]),
-        unauthorized_by_depth_mean={depth: _mean(values) for depth, values in depth_values.items()},
-        unauthorized_by_depth_std={depth: _std(values) for depth, values in depth_values.items()},
     )
 
 
@@ -83,10 +87,10 @@ def aggregate_comparison_runs(
     metrics_by_strategy: dict[str, Sequence[SimulationMetrics]],
 ) -> list[AggregatedMetrics]:
     """Aggregate all strategies preserving input order."""
-    aggregated: list[AggregatedMetrics] = []
-    for strategy, runs in metrics_by_strategy.items():
-        aggregated.append(aggregate_strategy_runs(strategy, runs))
-    return aggregated
+    return [
+        aggregate_strategy_runs(strategy, runs)
+        for strategy, runs in metrics_by_strategy.items()
+    ]
 
 
 def flatten_metrics(metrics_by_strategy: dict[str, Iterable[SimulationMetrics]]) -> list[SimulationMetrics]:
@@ -95,4 +99,3 @@ def flatten_metrics(metrics_by_strategy: dict[str, Iterable[SimulationMetrics]])
     for runs in metrics_by_strategy.values():
         flattened.extend(list(runs))
     return flattened
-

@@ -18,6 +18,9 @@ class EagerStrategy(SyncStrategy):
     def broadcasts_content_on_commit(self) -> bool:
         return True
 
+    def invalidates_peers_on_commit(self) -> bool:
+        return False
+
     def staleness_bound(self) -> int:
         return 0
 
