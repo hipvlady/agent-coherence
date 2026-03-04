@@ -9,6 +9,10 @@ description = "MESI-style artifact coherence for multi-agent AI systems"
 requires-python = ">=3.11"
 dependencies = ["pyyaml>=6.0"]
 
+[project.scripts]
+ccs-simulate = "ccs.cli.simulate:main"
+ccs-compare = "ccs.cli.compare:main"
+
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
 

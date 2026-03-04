@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CCS Strategy Comparison Report</title>
+  <style>
+    :root {
+      --bg: #f3f7f0;
+      --panel: #ffffff;
+      --fg: #1e2a1f;
+      --accent: #2e7d32;
+      --muted: #5f6d60;
+      --line: #d4dfd2;
+    }
+    body {
+      margin: 0;
+      font-family: "Iowan Old Style", "Palatino Linotype", serif;
+      color: var(--fg);
+      background: radial-gradient(circle at top right, #e6f3e4, var(--bg) 55%);
+    }
+    .wrap {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 32px 20px 40px;
+    }
+    .hero {
+      background: linear-gradient(135deg, #ffffff, #f6fbf5);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 22px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.04);
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 30px;
+      line-height: 1.1;
+      color: var(--accent);
+    }
+    .meta {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .panel {
+      margin-top: 20px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 16px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 10px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      color: var(--accent);
+      font-size: 12px;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+    pre {
+      margin: 0;
+      overflow: auto;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre;
+      color: #223326;
+      background: #f6fbf5;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      padding: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <h1>CCS Strategy Comparison</h1>
+      <p class="meta">Scenario: <strong>{{SCENARIO}}</strong></p>
+      <p class="meta">Runs per strategy: <strong>{{RUNS_PER_STRATEGY}}</strong> | Seed start: <strong>{{SEED_START}}</strong></p>
+      <p class="meta">Strategies: <strong>{{STRATEGIES}}</strong></p>
+    </section>
+    <section class="panel">
+      <h2>Aggregated Metrics</h2>
+      {{SUMMARY_TABLE}}
+    </section>
+    <section class="panel">
+      <h2>Dashboard JSON Payload</h2>
+      <pre>{{REPORT_JSON}}</pre>
+    </section>
+  </div>
+</body>
+</html>
