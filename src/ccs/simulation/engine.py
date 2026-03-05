@@ -97,6 +97,8 @@ class SimulationEngine:
         for _ in range(duration_ticks):
             self._deliver_messages()
             self._execute_actions_for_tick()
+            if self._strategy.broadcasts_every_tick():
+                self._broadcast_all_to_all(now_tick=self._clock.now())
             self._transient_state_timeouts += self._coordinator.enforce_transient_timeouts(
                 current_tick=self._clock.now(),
                 timeout_ticks=timeout_ticks,
@@ -280,6 +282,27 @@ class SimulationEngine:
             self._updates_issued += 1
             self._tokens_broadcast += self._update_token_size(artifact_id)
             self._context_injections += 1
+
+    def _broadcast_all_to_all(self, *, now_tick: int) -> None:
+        """Inject full content of all artifacts to all agents on this tick."""
+        for artifact_id in self._artifact_ids:
+            artifact = self._registry.get_artifact(artifact_id)
+            content = self._registry.get_content(artifact_id)
+            if artifact is None or content is None:
+                continue
+            for agent_id in self._agent_ids:
+                runtime = self._runtime_by_agent[agent_id]
+                runtime.handle_update(
+                    artifact_id=artifact_id,
+                    version=artifact.version,
+                    content=content,
+                    now_tick=now_tick,
+                    writer_agent_id=None,
+                )
+                self._updates_issued += 1
+                self._updates_delivered += 1
+                self._tokens_broadcast += self._artifact_token_size(artifact_id)
+                self._context_injections += 1
 
     def _deliver_messages(self) -> None:
         for message in self._network.deliver_due(self._clock.now()):

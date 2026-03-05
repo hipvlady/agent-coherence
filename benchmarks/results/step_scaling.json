@@ -2,44 +2,57 @@
   "sweep": "steps",
   "runs_per_point": 10,
   "strategies": [
+    "broadcast",
     "eager",
     "lazy"
   ],
   "rows": [
     {
       "S": 5,
-      "eager_sync_tokens_mean": 25804.8,
-      "lazy_sync_tokens_mean": 20096.8,
-      "lazy_savings_vs_eager": 0.2212
+      "broadcast_sync_tokens_mean": 259276.8,
+      "eager_sync_tokens_mean": 39731.2,
+      "lazy_sync_tokens_mean": 36873.6,
+      "lazy_savings_vs_broadcast": 0.8578,
+      "lazy_savings_vs_eager": 0.0719
     },
     {
       "S": 10,
-      "eager_sync_tokens_mean": 36454.4,
-      "lazy_sync_tokens_mean": 35286.8,
-      "lazy_savings_vs_eager": 0.032
+      "broadcast_sync_tokens_mean": 505036.8,
+      "eager_sync_tokens_mean": 56115.2,
+      "lazy_sync_tokens_mean": 49185.6,
+      "lazy_savings_vs_broadcast": 0.9026,
+      "lazy_savings_vs_eager": 0.1235
     },
     {
       "S": 20,
-      "eager_sync_tokens_mean": 49971.2,
-      "lazy_sync_tokens_mean": 54592.0,
-      "lazy_savings_vs_eager": 0.0
+      "broadcast_sync_tokens_mean": 996556.8,
+      "eager_sync_tokens_mean": 73728.0,
+      "lazy_sync_tokens_mean": 68884.8,
+      "lazy_savings_vs_broadcast": 0.9309,
+      "lazy_savings_vs_eager": 0.0657
     },
     {
       "S": 40,
-      "eager_sync_tokens_mean": 61440.0,
-      "lazy_sync_tokens_mean": 81297.6,
+      "broadcast_sync_tokens_mean": 1979596.8,
+      "eager_sync_tokens_mean": 92160.0,
+      "lazy_sync_tokens_mean": 98055.2,
+      "lazy_savings_vs_broadcast": 0.9505,
       "lazy_savings_vs_eager": 0.0
     },
     {
       "S": 50,
-      "eager_sync_tokens_mean": 68812.8,
-      "lazy_sync_tokens_mean": 97321.2,
+      "broadcast_sync_tokens_mean": 2471116.8,
+      "eager_sync_tokens_mean": 97075.2,
+      "lazy_sync_tokens_mean": 111192.4,
+      "lazy_savings_vs_broadcast": 0.955,
       "lazy_savings_vs_eager": 0.0
     },
     {
       "S": 100,
-      "eager_sync_tokens_mean": 104038.4,
-      "lazy_sync_tokens_mean": 178653.6,
+      "broadcast_sync_tokens_mean": 4928716.8,
+      "eager_sync_tokens_mean": 132300.8,
+      "lazy_sync_tokens_mean": 188440.8,
+      "lazy_savings_vs_broadcast": 0.9618,
       "lazy_savings_vs_eager": 0.0
     }
   ]

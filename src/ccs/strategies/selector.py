@@ -9,6 +9,7 @@ from typing import Mapping
 
 from .access_count import AccessCountStrategy
 from .base import SyncStrategy
+from .broadcast import BroadcastStrategy
 from .eager import EagerStrategy
 from .lazy import LazyStrategy
 from .lease import LeaseStrategy
@@ -34,6 +35,8 @@ def build_strategy(
 ) -> SyncStrategy:
     """Create strategy instance from normalized strategy name."""
     normalized = strategy_name.strip().lower()
+    if normalized == "broadcast":
+        return BroadcastStrategy()
     if normalized == "eager":
         return EagerStrategy()
     if normalized == "lazy":

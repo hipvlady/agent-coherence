@@ -11,10 +11,13 @@ import pytest
 
 from ccs.core.states import MESIState
 from ccs.strategies.access_count import AccessCountStrategy
+from ccs.strategies.broadcast import BroadcastStrategy
 from ccs.strategies.eager import EagerStrategy
 from ccs.strategies.lazy import LazyStrategy
 from ccs.strategies.lease import LeaseStrategy
 from ccs.strategies.selector import build_strategy, select_strategy_name_for_role
+from ccs.simulation.engine import SimulationEngine
+from ccs.simulation.scenarios import load_scenario
 
 
 def test_eager_broadcasts_full_content_and_has_zero_staleness_bound() -> None:
@@ -98,6 +101,7 @@ def test_selector_uses_role_override_or_default() -> None:
 
 
 def test_build_strategy_constructs_expected_types() -> None:
+    assert isinstance(build_strategy("broadcast"), BroadcastStrategy)
     assert isinstance(build_strategy("eager"), EagerStrategy)
     assert isinstance(build_strategy("lazy"), LazyStrategy)
     lease = build_strategy("lease", lease_ttl_ticks=9)
@@ -111,3 +115,22 @@ def test_build_strategy_constructs_expected_types() -> None:
 def test_build_strategy_rejects_unknown_name() -> None:
     with pytest.raises(ValueError):
         build_strategy("unknown")
+
+
+def test_broadcast_strategy_broadcasts_every_tick() -> None:
+    strategy = BroadcastStrategy()
+    assert strategy.broadcasts_every_tick() is True
+    assert strategy.broadcasts_content_on_commit() is False
+    assert strategy.staleness_bound() == 0
+
+
+def test_broadcast_baseline_token_cost() -> None:
+    scenario = load_scenario("benchmarks/scenarios/planning_canonical.yaml")
+    metrics = SimulationEngine(scenario, strategy_name="broadcast", seed=20260305).run()
+
+    n = int(scenario["simulation"]["num_agents"])
+    s = int(scenario["simulation"]["duration_ticks"])
+    total_artifact_tokens = sum(int(artifact["size_tokens"]) for artifact in scenario["artifacts"])
+    expected = n * s * total_artifact_tokens
+    ratio_delta = abs(metrics.tokens_broadcast - expected) / float(expected)
+    assert ratio_delta < 0.05
