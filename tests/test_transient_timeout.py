@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Tests for transient timeout fail-safe behavior."""
 
 from __future__ import annotations

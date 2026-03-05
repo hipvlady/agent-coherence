@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """CLI entrypoint for single-strategy simulation execution."""
 
 from __future__ import annotations

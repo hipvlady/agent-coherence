@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Common adapter runtime that wires coordinator, agents, and event bus."""
 
 from __future__ import annotations

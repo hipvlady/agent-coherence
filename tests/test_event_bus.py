@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Tests for in-memory event bus abstraction."""
 
 from __future__ import annotations

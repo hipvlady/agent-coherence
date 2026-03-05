@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Deterministic simulation engine for coherence strategy evaluation."""
 
 from __future__ import annotations

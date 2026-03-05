@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """CrewAI-oriented coherence adapter utilities."""
 
 from __future__ import annotations

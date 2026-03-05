@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Lazy invalidation strategy with on-demand refetch."""
 
 from __future__ import annotations

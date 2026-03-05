@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """In-memory event bus for invalidation and update fan-out."""
 
 from __future__ import annotations

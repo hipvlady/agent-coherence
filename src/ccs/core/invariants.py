@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Invariant helpers for coherence runtime checks."""
 
 from __future__ import annotations

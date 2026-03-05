@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Access-count bounded strategy for clock-independent staleness control."""
 
 from __future__ import annotations

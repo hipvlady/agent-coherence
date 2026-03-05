@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Tests for report rendering and dashboard payload generation."""
 
 from __future__ import annotations

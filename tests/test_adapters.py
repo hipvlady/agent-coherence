@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Tests for framework adapter integration helpers."""
 
 from __future__ import annotations

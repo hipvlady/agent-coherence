@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Behavior tests for synchronization strategy implementations."""
 
 from __future__ import annotations

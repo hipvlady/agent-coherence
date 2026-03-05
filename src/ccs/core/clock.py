@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Logical clock primitives for deterministic simulation."""
 
 from dataclasses import dataclass

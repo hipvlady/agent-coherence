@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Contract tests for coordinator registry/service operations."""
 
 from __future__ import annotations

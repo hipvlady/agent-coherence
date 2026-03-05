@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """MESI stable/transient state definitions and transition utilities."""
 
 from __future__ import annotations

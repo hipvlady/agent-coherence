@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Agent-side cache and runtime components."""
 
 from .cache import ArtifactCache

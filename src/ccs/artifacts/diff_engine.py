@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Deterministic text/JSON diff helpers for artifact synchronization."""
 
 from __future__ import annotations

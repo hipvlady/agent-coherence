@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Artifact-level helpers for payload diffing and reconstruction."""
 
 from .diff_engine import (

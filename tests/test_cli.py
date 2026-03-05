@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """CLI tests for simulate and compare commands."""
 
 from __future__ import annotations

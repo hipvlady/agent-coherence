@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Simulated message transport with configurable latency and loss."""
 
 from __future__ import annotations

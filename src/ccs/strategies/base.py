@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Base strategy contract for synchronization policy decisions."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Lease strategy with TTL-based local refresh."""
 
 from __future__ import annotations

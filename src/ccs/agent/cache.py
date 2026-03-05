@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Local artifact cache used by agent runtime."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Scenario loading and schema validation for coherence simulations."""
 
 from __future__ import annotations

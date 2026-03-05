@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Pluggable synchronization strategies for artifact coherence."""
 
 from .access_count import AccessCountStrategy

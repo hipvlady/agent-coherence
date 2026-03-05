@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Eager broadcast strategy with zero permitted staleness."""
 
 from __future__ import annotations
