@@ -44,8 +44,8 @@ class AggregatedMetrics:
     max_stale_steps_std: float
     staleness_bound_violations_mean: float
     staleness_bound_violations_std: float
-    crr_mean: float
-    crr_std: float
+    sync_broadcast_ratio_mean: float
+    sync_broadcast_ratio_std: float
     invalidation_efficiency_mean: float
     invalidation_efficiency_std: float
     message_overhead_mean: float
@@ -77,8 +77,8 @@ def aggregate_strategy_runs(strategy: str, runs: Sequence[SimulationMetrics]) ->
         max_stale_steps_std=_std([float(m.max_stale_steps) for m in runs]),
         staleness_bound_violations_mean=_mean([float(m.staleness_bound_violations) for m in runs]),
         staleness_bound_violations_std=_std([float(m.staleness_bound_violations) for m in runs]),
-        crr_mean=_mean([m.crr for m in runs]),
-        crr_std=_std([m.crr for m in runs]),
+        sync_broadcast_ratio_mean=_mean([m.sync_broadcast_ratio for m in runs]),
+        sync_broadcast_ratio_std=_std([m.sync_broadcast_ratio for m in runs]),
         invalidation_efficiency_mean=_mean([m.invalidation_efficiency for m in runs]),
         invalidation_efficiency_std=_std([m.invalidation_efficiency for m in runs]),
         message_overhead_mean=_mean([float(m.message_overhead) for m in runs]),

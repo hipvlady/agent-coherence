@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from datetime import date
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -90,10 +91,8 @@ def main() -> int:
             }
         )
 
-    manifest_path = output_root / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
     summary_path = output_root / "SUMMARY.md"
-    summary_path.write_text(
+    summary_contents = (
         "\n".join(
             [
                 "# Step 5 Benchmark Summary",
@@ -109,9 +108,15 @@ def main() -> int:
                 "See `manifest.json` for full reproducibility metadata (scenario files, seeds, outputs).",
             ]
         )
-        + "\n",
-        encoding="utf-8",
+        + "\n"
     )
+    summary_path.write_text(summary_contents, encoding="utf-8")
+
+    manifest["baseline_checksums"] = {
+        "SUMMARY.md": f"sha256:{hashlib.sha256(summary_contents.encode('utf-8')).hexdigest()}"
+    }
+    manifest_path = output_root / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
     print(f"Wrote benchmark artifacts to {output_root}")
     return 0
 

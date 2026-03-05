@@ -61,8 +61,12 @@ class SimulationMetrics:
         return self.invalidations_delivered / float(self.invalidations_issued)
 
     @property
-    def crr(self) -> float:
-        """Context Redundancy Ratio approximation for synchronization traffic."""
+    def sync_broadcast_ratio(self) -> float:
+        """Synchronization broadcast ratio: tokens_broadcast / total_sync_tokens.
+
+        This is distinct from the paper's CRR term (Coherence Reduction Ratio).
+        The field was renamed from ``crr`` to avoid abbreviation collision.
+        """
         total = self.synchronization_tokens
         if total == 0:
             return 0.0
@@ -74,7 +78,7 @@ class SimulationMetrics:
         payload["synchronization_tokens"] = self.synchronization_tokens
         payload["cache_hit_rate"] = self.cache_hit_rate
         payload["invalidation_efficiency"] = self.invalidation_efficiency
-        payload["crr"] = self.crr
+        payload["sync_broadcast_ratio"] = self.sync_broadcast_ratio
         return payload
 
 

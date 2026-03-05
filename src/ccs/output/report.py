@@ -74,7 +74,7 @@ def _render_summary_table(report: StrategyComparisonReport) -> str:
                     f"<td>{_fmt(item.get('cache_hit_rate_mean'))}</td>",
                     f"<td>{_fmt(item.get('stale_reads_mean'))}</td>",
                     f"<td>{_fmt(item.get('max_stale_steps_mean'))}</td>",
-                    f"<td>{_fmt(item.get('crr_mean'))}</td>",
+                    f"<td>{_fmt(item.get('sync_broadcast_ratio_mean'))}</td>",
                     "</tr>",
                 ]
             )
@@ -92,7 +92,7 @@ def _render_summary_table(report: StrategyComparisonReport) -> str:
         "<th>Cache Hit Rate Mean</th>"
         "<th>Stale Reads Mean</th>"
         "<th>Max Stale Steps Mean</th>"
-        "<th>CRR Mean</th>"
+        "<th>Sync/Broadcast Ratio Mean</th>"
         "</tr></thead>"
     )
     body = "<tbody>" + "".join(rows) + "</tbody>"
