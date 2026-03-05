@@ -1,0 +1,46 @@
+{
+  "sweep": "steps",
+  "runs_per_point": 10,
+  "strategies": [
+    "eager",
+    "lazy"
+  ],
+  "rows": [
+    {
+      "S": 5,
+      "eager_sync_tokens_mean": 25804.8,
+      "lazy_sync_tokens_mean": 20096.8,
+      "lazy_savings_vs_eager": 0.2212
+    },
+    {
+      "S": 10,
+      "eager_sync_tokens_mean": 36454.4,
+      "lazy_sync_tokens_mean": 35286.8,
+      "lazy_savings_vs_eager": 0.032
+    },
+    {
+      "S": 20,
+      "eager_sync_tokens_mean": 49971.2,
+      "lazy_sync_tokens_mean": 54592.0,
+      "lazy_savings_vs_eager": 0.0
+    },
+    {
+      "S": 40,
+      "eager_sync_tokens_mean": 61440.0,
+      "lazy_sync_tokens_mean": 81297.6,
+      "lazy_savings_vs_eager": 0.0
+    },
+    {
+      "S": 50,
+      "eager_sync_tokens_mean": 68812.8,
+      "lazy_sync_tokens_mean": 97321.2,
+      "lazy_savings_vs_eager": 0.0
+    },
+    {
+      "S": 100,
+      "eager_sync_tokens_mean": 104038.4,
+      "lazy_sync_tokens_mean": 178653.6,
+      "lazy_savings_vs_eager": 0.0
+    }
+  ]
+}

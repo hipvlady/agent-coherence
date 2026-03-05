@@ -62,7 +62,7 @@ def test_engine_run_returns_coherence_metrics() -> None:
     assert metrics.synchronization_tokens == (
         metrics.tokens_fetch + metrics.tokens_broadcast + metrics.tokens_invalidation
     )
-    assert "crr" in metrics.to_dict()
+    assert "sync_broadcast_ratio" in metrics.to_dict()
 
 
 def test_run_strategy_range_uses_seed_window() -> None:

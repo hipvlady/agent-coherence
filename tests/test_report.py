@@ -59,7 +59,7 @@ def test_build_dashboard_payload_has_schema_version() -> None:
                 "cache_hit_rate_mean": 0.4,
                 "stale_reads_mean": 2.0,
                 "max_stale_steps_mean": 1.0,
-                "crr_mean": 0.0,
+                "sync_broadcast_ratio_mean": 0.0,
             }
         ],
     )
@@ -86,7 +86,7 @@ def test_render_html_report_contains_summary_and_json() -> None:
                 "cache_hit_rate_mean": 0.4,
                 "stale_reads_mean": 2.0,
                 "max_stale_steps_mean": 1.0,
-                "crr_mean": 0.0,
+                "sync_broadcast_ratio_mean": 0.0,
             }
         ],
     )

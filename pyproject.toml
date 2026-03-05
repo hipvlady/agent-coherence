@@ -6,7 +6,16 @@ build-backend = "setuptools.build_meta"
 name = "agent-coherence"
 version = "0.1.0"
 description = "MESI-style artifact coherence for multi-agent AI systems"
+readme = "README.md"
 license = { file = "LICENSE" }
+keywords = ["multi-agent", "llm", "cache-coherence", "mesi", "token-efficiency", "agents"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Programming Language :: Python :: 3.11",
+  "License :: OSI Approved :: Apache Software License",
+]
 requires-python = ">=3.11"
 dependencies = ["pyyaml>=6.0"]
 
@@ -21,3 +30,6 @@ dev = ["pytest>=7.0"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[project.urls]
+Repository = "https://github.com/hipvlady/arbiter"

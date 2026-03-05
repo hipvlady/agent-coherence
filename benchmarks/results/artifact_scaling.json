@@ -1,0 +1,38 @@
+{
+  "sweep": "artifact_size",
+  "runs_per_point": 10,
+  "strategies": [
+    "eager",
+    "lazy"
+  ],
+  "rows": [
+    {
+      "artifact_tokens": 4096,
+      "eager_sync_tokens_mean": 61440.0,
+      "lazy_sync_tokens_mean": 81297.6,
+      "lazy_savings_vs_eager": 0.0,
+      "absolute_savings_M": -0.02
+    },
+    {
+      "artifact_tokens": 8192,
+      "eager_sync_tokens_mean": 122880.0,
+      "lazy_sync_tokens_mean": 162398.4,
+      "lazy_savings_vs_eager": 0.0,
+      "absolute_savings_M": -0.04
+    },
+    {
+      "artifact_tokens": 32768,
+      "eager_sync_tokens_mean": 491520.0,
+      "lazy_sync_tokens_mean": 649003.2,
+      "lazy_savings_vs_eager": 0.0,
+      "absolute_savings_M": -0.157
+    },
+    {
+      "artifact_tokens": 65536,
+      "eager_sync_tokens_mean": 983040.0,
+      "lazy_sync_tokens_mean": 1297809.6,
+      "lazy_savings_vs_eager": 0.0,
+      "absolute_savings_M": -0.315
+    }
+  ]
+}
