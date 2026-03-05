@@ -1,10 +1,24 @@
 {
   "baseline_checksums": {
-    "SUMMARY.md": "sha256:cfe198ccb0b03aa7cdb399810dd94e627b90f021b2eaa2ea7da7ff9deaca946e"
+    "SUMMARY.md": "sha256:029f85d003676b9d0801f1bc6a94307512dc68df3d90aef82e590016dcea71b7"
   },
   "generated_on": "2026-03-05",
   "runs_per_strategy": 10,
   "scenarios": [
+    {
+      "context_model": "conditional_injection",
+      "output_html": "benchmarks/results/step5/planning_canonical.html",
+      "output_json": "benchmarks/results/step5/planning_canonical.json",
+      "runs_per_strategy": 10,
+      "scenario_file": "benchmarks/scenarios/planning_canonical.yaml",
+      "scenario_name": "planning-canonical",
+      "seed_start": 20260305,
+      "strategies": [
+        "broadcast",
+        "eager",
+        "lazy"
+      ]
+    },
     {
       "context_model": "conditional_injection",
       "output_html": "benchmarks/results/step5/read_heavy.html",
@@ -14,6 +28,7 @@
       "scenario_name": "read-heavy",
       "seed_start": 2026030401,
       "strategies": [
+        "broadcast",
         "eager",
         "lazy"
       ]
@@ -27,6 +42,7 @@
       "scenario_name": "write-heavy",
       "seed_start": 2026030402,
       "strategies": [
+        "broadcast",
         "eager",
         "lazy"
       ]
@@ -40,6 +56,7 @@
       "scenario_name": "parallel-editing",
       "seed_start": 2026030403,
       "strategies": [
+        "broadcast",
         "eager",
         "lazy"
       ]
@@ -53,6 +70,7 @@
       "scenario_name": "large-artifact-reasoning",
       "seed_start": 2026030404,
       "strategies": [
+        "broadcast",
         "eager",
         "lazy"
       ]
@@ -66,6 +84,7 @@
       "scenario_name": "access-always-read",
       "seed_start": 2026030411,
       "strategies": [
+        "broadcast",
         "eager",
         "lazy"
       ]
@@ -79,6 +98,7 @@
       "scenario_name": "access-conditional-injection",
       "seed_start": 2026030412,
       "strategies": [
+        "broadcast",
         "eager",
         "lazy"
       ]
@@ -92,12 +112,14 @@
       "scenario_name": "access-pointer",
       "seed_start": 2026030413,
       "strategies": [
+        "broadcast",
         "eager",
         "lazy"
       ]
     }
   ],
   "strategies": [
+    "broadcast",
     "eager",
     "lazy"
   ]

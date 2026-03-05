@@ -27,6 +27,7 @@ def main() -> int:
     output_root.mkdir(parents=True, exist_ok=True)
 
     scenario_files = [
+        "planning_canonical.yaml",
         "read_heavy.yaml",
         "write_heavy.yaml",
         "parallel_editing.yaml",
@@ -37,7 +38,7 @@ def main() -> int:
     ]
 
     runs = 10
-    strategies = ["eager", "lazy"]
+    strategies = ["broadcast", "eager", "lazy"]
     manifest: dict[str, object] = {
         "generated_on": str(date.today()),
         "runs_per_strategy": runs,
@@ -47,9 +48,9 @@ def main() -> int:
 
     summary_rows: list[str] = []
     summary_rows.append(
-        "| scenario | context_model | eager_sync_tokens | lazy_sync_tokens | lazy_savings_vs_eager |"
+        "| scenario | context_model | broadcast_sync_tokens | eager_sync_tokens | lazy_sync_tokens | lazy_savings_vs_broadcast | lazy_savings_vs_eager |"
     )
-    summary_rows.append("|---|---:|---:|---:|---:|")
+    summary_rows.append("|---|---:|---:|---:|---:|---:|---:|")
 
     for file_name in scenario_files:
         scenario_path = scenario_root / file_name
@@ -69,13 +70,16 @@ def main() -> int:
         write_html_report(report, out_html)
 
         aggregated = {item["strategy"]: item for item in report.aggregated}
+        broadcast_tokens = float(aggregated["broadcast"]["synchronization_tokens_mean"])
         eager_tokens = float(aggregated["eager"]["synchronization_tokens_mean"])
         lazy_tokens = float(aggregated["lazy"]["synchronization_tokens_mean"])
-        savings = 0.0 if eager_tokens <= 0 else max(0.0, 1.0 - (lazy_tokens / eager_tokens))
+        savings_vs_broadcast = 0.0 if broadcast_tokens <= 0 else max(0.0, 1.0 - (lazy_tokens / broadcast_tokens))
+        savings_vs_eager = 0.0 if eager_tokens <= 0 else max(0.0, 1.0 - (lazy_tokens / eager_tokens))
         context_model = scenario["context_semantics"]["model"]
         summary_rows.append(
             f"| {scenario['scenario']['name']} | {context_model} | "
-            f"{eager_tokens:.2f} | {lazy_tokens:.2f} | {savings:.4f} |"
+            f"{broadcast_tokens:.2f} | {eager_tokens:.2f} | {lazy_tokens:.2f} | "
+            f"{savings_vs_broadcast:.4f} | {savings_vs_eager:.4f} |"
         )
 
         manifest["scenarios"].append(

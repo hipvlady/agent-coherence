@@ -1,0 +1,13 @@
+{
+  "all_pass": false,
+  "baseline_checksums": {
+    "SUMMARY.md": "sha256:e47dd28e85a25884555f533694f4d330311765729c8e54741745428b21163e74"
+  },
+  "broadcast_baseline_tokens": 1966080,
+  "generated_on": "2026-03-05",
+  "runs_per_strategy": 10,
+  "strategies": [
+    "broadcast",
+    "lazy"
+  ]
+}

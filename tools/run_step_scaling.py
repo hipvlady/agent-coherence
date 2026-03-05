@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Arbiter contributors.
 # The Coherence Protocol for AI Agents
 
-"""S-scaling sweep: vary duration_ticks for eager vs lazy synchronization cost."""
+"""S-scaling sweep: vary duration_ticks with broadcast/eager/lazy baselines."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from ccs.simulation.scenarios import load_scenario
 
 STEP_VALUES = [5, 10, 20, 40, 50, 100]
 RUNS_PER_POINT = 10
-STRATEGIES = ["eager", "lazy"]
+STRATEGIES = ["broadcast", "eager", "lazy"]
 SEED_START = 20260305
 
 
@@ -47,20 +47,25 @@ def main(argv: list[str] | None = None) -> int:
             seed_start=SEED_START,
         )
         aggregated = {item["strategy"]: item for item in report.aggregated}
+        broadcast_sync = float(aggregated["broadcast"]["synchronization_tokens_mean"])
         eager_sync = float(aggregated["eager"]["synchronization_tokens_mean"])
         lazy_sync = float(aggregated["lazy"]["synchronization_tokens_mean"])
-        savings = 0.0 if eager_sync == 0 else max(0.0, 1.0 - lazy_sync / eager_sync)
+        savings_vs_broadcast = 0.0 if broadcast_sync == 0 else max(0.0, 1.0 - lazy_sync / broadcast_sync)
+        savings_vs_eager = 0.0 if eager_sync == 0 else max(0.0, 1.0 - lazy_sync / eager_sync)
         rows.append(
             {
                 "S": step_count,
+                "broadcast_sync_tokens_mean": broadcast_sync,
                 "eager_sync_tokens_mean": eager_sync,
                 "lazy_sync_tokens_mean": lazy_sync,
-                "lazy_savings_vs_eager": round(savings, 4),
+                "lazy_savings_vs_broadcast": round(savings_vs_broadcast, 4),
+                "lazy_savings_vs_eager": round(savings_vs_eager, 4),
             }
         )
         print(
-            f"  S={step_count:4d}: eager={eager_sync:>12.1f} "
-            f"lazy={lazy_sync:>12.1f} savings={savings:.1%}"
+            f"  S={step_count:4d}: broadcast={broadcast_sync:>12.1f} "
+            f"eager={eager_sync:>12.1f} lazy={lazy_sync:>12.1f} "
+            f"savings_vs_bcast={savings_vs_broadcast:.1%} savings_vs_eager={savings_vs_eager:.1%}"
         )
 
     payload = {

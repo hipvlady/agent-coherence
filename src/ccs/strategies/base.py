@@ -26,6 +26,10 @@ class SyncStrategy(ABC):
         """Whether the strategy pushes full content on commit."""
         return False
 
+    def broadcasts_every_tick(self) -> bool:
+        """Whether the strategy injects full content to all agents each tick."""
+        return False
+
     def staleness_bound(self) -> int | None:
         """Max stale steps permitted by strategy; None means unbounded by strategy."""
         return None
