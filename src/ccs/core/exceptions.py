@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Domain exception hierarchy for coherence protocol operations."""
 
 from __future__ import annotations

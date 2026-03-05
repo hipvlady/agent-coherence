@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Integration tests for simulation engine and comparison runner."""
 
 from __future__ import annotations

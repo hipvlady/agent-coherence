@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "agent-coherence"
 version = "0.1.0"
 description = "MESI-style artifact coherence for multi-agent AI systems"
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
 dependencies = ["pyyaml>=6.0"]
 

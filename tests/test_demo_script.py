@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Smoke test for the multi-agent demo script."""
 
 from __future__ import annotations

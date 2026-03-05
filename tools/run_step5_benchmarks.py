@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Run Step 5 benchmark set and persist reproducible artifacts."""
 
 from __future__ import annotations

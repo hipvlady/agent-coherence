@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Simulation and benchmarking helpers."""
 
 from .aggregation import AggregatedMetrics, aggregate_comparison_runs, aggregate_strategy_runs

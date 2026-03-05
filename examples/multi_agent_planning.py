@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Minimal multi-agent coherence demo for post-v0.1 validation."""
 
 from __future__ import annotations

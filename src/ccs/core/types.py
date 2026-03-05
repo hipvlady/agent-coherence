@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Core domain dataclasses for artifact coherence."""
 
 from __future__ import annotations

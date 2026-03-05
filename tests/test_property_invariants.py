@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Deterministic randomized invariant tests for coordinator protocol."""
 
 from __future__ import annotations

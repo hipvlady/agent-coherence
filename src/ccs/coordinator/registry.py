@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """In-memory artifact registry for coherence coordination."""
 
 from __future__ import annotations

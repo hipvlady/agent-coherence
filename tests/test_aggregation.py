@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Unit tests for multi-run coherence aggregation helpers."""
 
 from __future__ import annotations

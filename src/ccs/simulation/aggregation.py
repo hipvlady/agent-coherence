@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Aggregation utilities for multi-run coherence strategy comparisons."""
 
 from __future__ import annotations

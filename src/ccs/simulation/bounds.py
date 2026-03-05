@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
 """Helpers for enforcing strategy-specific staleness bounds."""
 
 from __future__ import annotations
