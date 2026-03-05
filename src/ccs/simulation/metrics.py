@@ -64,8 +64,8 @@ class SimulationMetrics:
     def sync_broadcast_ratio(self) -> float:
         """Synchronization broadcast ratio: tokens_broadcast / total_sync_tokens.
 
-        This is distinct from the paper's CRR term (Coherence Reduction Ratio).
-        The field was renamed from ``crr`` to avoid abbreviation collision.
+        This is distinct from the paper's CTX-RR term (Coherence Reduction Ratio).
+        The field was renamed from ``ctx_rr`` to avoid abbreviation collision.
         """
         total = self.synchronization_tokens
         if total == 0:
