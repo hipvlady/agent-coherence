@@ -7,14 +7,16 @@ name = "agent-coherence"
 version = "0.1.0"
 description = "MESI-style artifact coherence for multi-agent AI systems"
 readme = "README.md"
-license = { file = "LICENSE" }
+license = { text = "Apache-2.0" }
+authors = [{ name = "Arbiter contributors" }]
 keywords = ["multi-agent", "llm", "cache-coherence", "mesi", "token-efficiency", "agents"]
 classifiers = [
   "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
   "Intended Audience :: Science/Research",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
-  "License :: OSI Approved :: Apache Software License",
 ]
 requires-python = ">=3.11"
 dependencies = ["pyyaml>=6.0"]
@@ -31,5 +33,14 @@ dev = ["pytest>=7.0"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 
+[tool.setuptools]
+package-dir = { "" = "src" }
+license-files = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [project.urls]
-Repository = "https://github.com/hipvlady/arbiter"
+Homepage = "https://github.com/hipvlady/agent-coherence"
+Repository = "https://github.com/hipvlady/agent-coherence"
+Issues = "https://github.com/hipvlady/agent-coherence/issues"
