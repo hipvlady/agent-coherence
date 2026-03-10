@@ -1,6 +1,6 @@
-# Arbiter — The Coherence Protocol for AI Agents
+# agent-coherence — The Coherence Protocol for AI Agents
 
-[![CI](https://github.com/hipvlady/arbiter/actions/workflows/ci.yml/badge.svg)](https://github.com/hipvlady/arbiter/actions/workflows/ci.yml)
+[![CI](https://github.com/hipvlady/agent-coherence/actions/workflows/ci.yml/badge.svg)](https://github.com/hipvlady/agent-coherence/actions/workflows/ci.yml)
 
 `agent-coherence` implements MESI-style cache coherence for shared artifacts in multi-agent LLM systems, reducing synchronization token overhead and preventing stale-context coordination failures.
 

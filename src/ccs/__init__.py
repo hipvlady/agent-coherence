@@ -2,3 +2,5 @@
 # The Coherence Protocol for AI Agents
 
 """agent-coherence core package."""
+
+__version__ = "0.1.0"
