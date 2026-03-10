@@ -27,11 +27,11 @@ def _parse_summary_rows(summary_path: Path) -> dict[str, float]:
         if line.startswith("|---") or "lazy_savings_vs_eager" in line:
             continue
         cells = [cell.strip() for cell in line.split("|")[1:-1]]
-        if len(cells) != 5:
+        if len(cells) != 7:
             continue
         scenario_name = cells[0]
         try:
-            rows[scenario_name] = float(cells[4])
+            rows[scenario_name] = float(cells[6])
         except ValueError:
             continue
     return rows

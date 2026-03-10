@@ -21,10 +21,10 @@ from ccs.simulation.engine import run_strategy_comparison
 from ccs.simulation.scenarios import load_scenario
 
 CANONICAL_SCENARIOS = [
-    ("planning_canonical.yaml", "A: Planning", 0.05, 0.850, 0.03),
-    ("analysis_canonical.yaml", "B: Analysis", 0.10, 0.800, 0.03),
-    ("dev_canonical.yaml", "C: Development", 0.25, 0.650, 0.04),
-    ("churn_canonical.yaml", "D: High Churn", 0.50, 0.400, 0.05),
+    ("planning_canonical.yaml", "A: Planning", 0.05, 0.950, 0.03),
+    ("analysis_canonical.yaml", "B: Analysis", 0.10, 0.923, 0.03),
+    ("dev_canonical.yaml", "C: Development", 0.25, 0.883, 0.04),
+    ("churn_canonical.yaml", "D: High Churn", 0.50, 0.842, 0.05),
 ]
 
 STRATEGIES = ["broadcast", "lazy"]
