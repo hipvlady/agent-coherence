@@ -19,6 +19,9 @@ python tools/run_step_scaling.py --output benchmarks/results/step_scaling.json
 echo "==> Artifact-size scaling sweep"
 python tools/run_artifact_scaling.py --output benchmarks/results/artifact_scaling.json
 
+echo "==> Canonical benchmark suite"
+python tools/run_canonical_benchmarks.py
+
 echo "==> Verifying results against committed baseline"
 python tools/verify_baseline.py \
   --baseline benchmarks/results/step5/SUMMARY.md \

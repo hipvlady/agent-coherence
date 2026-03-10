@@ -1,10 +1,10 @@
 {
-  "all_pass": false,
+  "all_pass": true,
   "baseline_checksums": {
-    "SUMMARY.md": "sha256:e47dd28e85a25884555f533694f4d330311765729c8e54741745428b21163e74"
+    "SUMMARY.md": "sha256:1f942bc2030478366825129469ec7278b2573db33c14ad76fd5f34118f865abb"
   },
   "broadcast_baseline_tokens": 1966080,
-  "generated_on": "2026-03-05",
+  "generated_on": "2026-03-10",
   "runs_per_strategy": 10,
   "strategies": [
     "broadcast",
