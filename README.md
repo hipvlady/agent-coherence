@@ -31,7 +31,7 @@ See [REPRODUCE.md](REPRODUCE.md) for full output mapping and baseline verificati
 
 ## Paper
 
-Token Coherence: MESI-Style Cache Coherence for Shared Artifacts in Multi-Agent LLM Systems
+[Token Coherence: Adapting MESI Cache Protocols to Minimize Synchronization Overhead in Multi-Agent LLM Systems](https://arxiv.org/abs/2603.15183)
 
 ## License
 

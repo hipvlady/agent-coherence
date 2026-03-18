@@ -1,6 +1,6 @@
 # Reproducing CCS Simulation Results
 
-Results in `token_coherence_paper.md` §8 are reproducible from this repository.
+Results in [Token Coherence: Adapting MESI Cache Protocols to Minimize Synchronization Overhead in Multi-Agent LLM Systems](https://arxiv.org/abs/2603.15183) §8 are reproducible from this repository.
 
 ## Requirements
 
@@ -10,8 +10,8 @@ Results in `token_coherence_paper.md` §8 are reproducible from this repository.
 ## Quick start
 
 ```bash
-git clone https://github.com/hipvlady/arbiter
-cd arbiter
+git clone https://github.com/hipvlady/agent-coherence
+cd agent-coherence
 bash reproduce.sh
 ```
 
