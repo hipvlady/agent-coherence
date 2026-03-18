@@ -2,7 +2,7 @@
 ## agent-coherence (F1-F6 execution)
 
 Derived from: `benchmark_validation_report.docx` (2026-03-05)
-Validated against: `hipvlady/arbiter` (`dev`, 2026-03-05)
+Validated against: `hipvlady/agent-coherence` (`dev`, 2026-03-05)
 
 ---
 
