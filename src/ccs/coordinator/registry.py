@@ -107,6 +107,10 @@ class ArtifactRegistry:
         """Return tick when agent entered transient state if present."""
         return self._records[artifact_id].transient_tick_by_agent.get(agent_id)
 
+    def remove_artifact(self, artifact_id: UUID) -> None:
+        """Remove artifact record and all associated state from registry."""
+        self._records.pop(artifact_id, None)
+
     def valid_holders(self, artifact_id: UUID) -> list[UUID]:
         """Return agents that currently hold non-invalid entries."""
         return [

@@ -159,6 +159,69 @@ def test_write_and_commit_propagate_issued_tick_in_signals() -> None:
     assert all(signal.issued_at_tick == 13 for signal in commit_signals)
 
 
+def test_delete_returns_signals_for_non_invalid_holders_and_removes_artifact() -> None:
+    svc = _service()
+    artifact = svc.register_artifact(name="plan.md", content="v1")
+    agent_a = uuid4()
+    agent_b = uuid4()
+    agent_c = uuid4()
+    svc.fetch(FetchRequest(artifact_id=artifact.id, requesting_agent_id=agent_a, requested_at_tick=1))
+    svc.fetch(FetchRequest(artifact_id=artifact.id, requesting_agent_id=agent_b, requested_at_tick=2))
+    # agent_c has INVALID state (never fetched)
+
+    signals = svc.delete(agent_id=agent_a, artifact_id=artifact.id, issued_at_tick=5)
+
+    assert len(signals) == 2
+    assert all(s.artifact_id == artifact.id for s in signals)
+    assert all(s.issued_at_tick == 5 for s in signals)
+    assert not svc.registry.has_artifact(artifact.id)
+
+
+def test_delete_absent_artifact_returns_empty_list() -> None:
+    svc = _service()
+    absent_id = uuid4()
+
+    signals = svc.delete(agent_id=uuid4(), artifact_id=absent_id)
+
+    assert signals == []
+
+
+def test_delete_all_invalid_holders_removes_artifact_and_returns_empty() -> None:
+    svc = _service()
+    artifact = svc.register_artifact(name="plan.md", content="v1")
+    agent_a = uuid4()
+    # Register agent state as INVALID explicitly
+    svc.registry.set_agent_state(artifact.id, agent_a, MESIState.INVALID)
+
+    signals = svc.delete(agent_id=uuid4(), artifact_id=artifact.id)
+
+    assert signals == []
+    assert not svc.registry.has_artifact(artifact.id)
+
+
+def test_invalidate_returns_none_after_artifact_deleted() -> None:
+    svc = _service()
+    artifact = svc.register_artifact(name="plan.md", content="v1")
+    agent_a = uuid4()
+    svc.fetch(FetchRequest(artifact_id=artifact.id, requesting_agent_id=agent_a, requested_at_tick=1))
+    svc.delete(agent_id=agent_a, artifact_id=artifact.id)
+
+    result = svc.invalidate(
+        agent_id=agent_a,
+        artifact_id=artifact.id,
+        new_version=1,
+        issuer_agent_id=uuid4(),
+        issued_at_tick=2,
+    )
+
+    assert result is None
+
+
+def test_remove_artifact_unknown_id_is_silent() -> None:
+    registry = ArtifactRegistry()
+    registry.remove_artifact(uuid4())  # must not raise
+
+
 def test_peer_transient_lifecycle_set_on_write_and_cleared_on_invalidate_ack() -> None:
     svc = _service()
     artifact = svc.register_artifact(name="plan.md", content="v1")
