@@ -208,9 +208,14 @@ class CoordinatorService:
         new_version: int,
         issuer_agent_id: UUID,
         issued_at_tick: int,
-    ) -> InvalidationSignal:
-        """Apply invalidation for one agent and return corresponding signal object."""
-        self._require_artifact(artifact_id)
+    ) -> InvalidationSignal | None:
+        """Apply invalidation for one agent and return corresponding signal object.
+
+        Returns None when the artifact has already been deleted — callers applying
+        a delete-tombstone invalidation must not crash on a missing artifact.
+        """
+        if not self.registry.has_artifact(artifact_id):
+            return None
         self.registry.set_agent_state(artifact_id, agent_id, MESIState.INVALID)
         self.registry.clear_agent_transient(artifact_id, agent_id)
         return InvalidationSignal(
@@ -219,6 +224,34 @@ class CoordinatorService:
             issued_at_tick=issued_at_tick,
             issuer_agent_id=issuer_agent_id,
         )
+
+    def delete(
+        self,
+        *,
+        agent_id: UUID,
+        artifact_id: UUID,
+        issued_at_tick: int = 0,
+    ) -> list[InvalidationSignal]:
+        """Remove artifact and emit invalidation signals to all non-INVALID holders.
+
+        Does not require the caller to hold EXCLUSIVE or MODIFIED state first.
+        Returns [] when the artifact is absent (silent no-op for the caller).
+        """
+        if not self.registry.has_artifact(artifact_id):
+            return []
+        artifact = self._require_artifact(artifact_id)
+        signals = [
+            InvalidationSignal(
+                artifact_id=artifact_id,
+                new_version=artifact.version,
+                issued_at_tick=issued_at_tick,
+                issuer_agent_id=agent_id,
+            )
+            for holder_id, state in self.registry.get_state_map(artifact_id).items()
+            if state != MESIState.INVALID
+        ]
+        self.registry.remove_artifact(artifact_id)
+        return signals
 
     def enforce_transient_timeouts(self, *, current_tick: int, timeout_ticks: int) -> int:
         """Force expired transient entries to INVALID as fail-safe recovery."""

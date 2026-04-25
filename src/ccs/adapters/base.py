@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from ccs.agent.runtime import AgentRuntime
@@ -36,6 +37,7 @@ class CoherenceAdapterCore:
         lease_ttl_ticks: int = 300,
         access_count_max_accesses: int = 100,
         event_bus: InMemoryEventBus | None = None,
+        **strategy_kwargs: Any,
     ) -> None:
         self.registry = ArtifactRegistry()
         self.coordinator = CoordinatorService(self.registry)
@@ -128,6 +130,10 @@ class CoherenceAdapterCore:
     def agent_names(self) -> list[str]:
         """Return registered adapter agent names."""
         return sorted(self._agents_by_name.keys())
+
+    def agent_id_for(self, name: str) -> UUID:
+        """Return the UUID for a registered agent by name."""
+        return self._binding(name).agent_id
 
     def _binding(self, agent_name: str) -> AgentBinding:
         binding = self._agents_by_name.get(agent_name)

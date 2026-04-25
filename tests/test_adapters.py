@@ -5,7 +5,10 @@
 
 from __future__ import annotations
 
+from uuid import NAMESPACE_URL, uuid5
+
 from ccs.adapters.autogen import AutoGenAdapter
+from ccs.adapters.base import CoherenceAdapterCore
 from ccs.adapters.crewai import CrewAIAdapter
 from ccs.adapters.langgraph import LangGraphAdapter
 from ccs.core.states import MESIState
@@ -81,3 +84,41 @@ def test_autogen_adapter_turn_hooks_roundtrip_content() -> None:
 
     planner_view = adapter.pre_turn_context(agent_name="planner", artifact_ids=[artifact.id], now_tick=3)
     assert planner_view[artifact.id] == "v2"
+
+
+def test_coherence_adapter_core_default_strategy_unchanged() -> None:
+    core = CoherenceAdapterCore(strategy_name="lazy")
+    core.register_agent("planner")
+    artifact = core.register_artifact(name="plan.md", content="v1")
+    resp = core.read(agent_name="planner", artifact_id=artifact.id, now_tick=1)
+    assert resp.content == "v1"
+
+
+def test_coherence_adapter_core_explicit_strategy_param_still_works() -> None:
+    core = CoherenceAdapterCore(strategy_name="lease", lease_ttl_ticks=50)
+    core.register_agent("agent")
+    artifact = core.register_artifact(name="a.md", content="x")
+    resp = core.read(agent_name="agent", artifact_id=artifact.id, now_tick=1)
+    assert resp.content == "x"
+
+
+def test_coherence_adapter_core_unknown_strategy_kwarg_does_not_raise() -> None:
+    # Unknown kwargs are absorbed and silently ignored — forward-compat escape hatch.
+    core = CoherenceAdapterCore(strategy_name="lazy", some_future_kwarg=99)
+    assert core is not None
+
+
+def test_agent_id_for_returns_deterministic_uuid() -> None:
+    core = CoherenceAdapterCore(strategy_name="lazy")
+    core.register_agent("planner")
+    expected = uuid5(NAMESPACE_URL, "ccs-agent:planner")
+    assert core.agent_id_for("planner") == expected
+
+
+def test_agent_id_for_unknown_name_raises_key_error() -> None:
+    core = CoherenceAdapterCore(strategy_name="lazy")
+    try:
+        core.agent_id_for("nobody")
+        assert False, "expected KeyError"
+    except KeyError:
+        pass

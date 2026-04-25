@@ -28,6 +28,12 @@ ccs-check-architecture = "ccs.hardening.architecture:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+langgraph = ["langgraph>=0.2"]
+crewai = ["crewai>=0.80"]
+otel = ["opentelemetry-api>=1.0"]
+langsmith = ["langsmith>=0.1"]
+benchmark = ["langchain-core>=0.2"]
+all = ["agent-coherence[langgraph,crewai,otel,langsmith,benchmark]"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
