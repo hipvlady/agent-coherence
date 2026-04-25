@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agent-coherence"
 version = "0.1.0"
-description = "MESI-style artifact coherence for multi-agent AI systems"
+description = "MESI-based shared-state coherence with 47–69% token savings on realistic multi-agent workloads"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Arbiter contributors" }]

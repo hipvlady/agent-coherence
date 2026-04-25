@@ -1,30 +1,44 @@
 # agent-coherence
 
-**Cache coherence for multi-agent LLM systems.** Cut synchronization
-tokens by 84-95% by fetching shared artifacts on demand and invalidating
-peers when they change instead of rebroadcasting full context every
-step.
+**Drop-in replacement for LangGraph's `InMemoryStore` that cuts shared-state token
+overhead by 47–69% on realistic multi-agent workloads.**
 
-Drop-in adapters for LangGraph, CrewAI, and AutoGen.
-TLA+-verified safety properties. Apache 2.0.
+`agent-coherence` adapts the MESI cache coherence protocol, used in CPU caches
+since 1984, to artifact synchronization across LLM agents. Instead of
+rebroadcasting shared context to every agent on every step, agents hold valid
+copies until something changes, then receive targeted invalidation.
 
 [![CI](https://github.com/hipvlady/agent-coherence/actions/workflows/ci.yml/badge.svg)](https://github.com/hipvlady/agent-coherence/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/agent-coherence)](https://pypi.org/project/agent-coherence/)
 [![arXiv](https://img.shields.io/badge/arXiv-2603.15183-b31b1b)](https://arxiv.org/abs/2603.15183)
 
+```python
+# Before
+from langgraph.store.memory import InMemoryStore
+store = InMemoryStore()
+
+# After — one import change, no other code changes
+from ccs.adapters import CCSStore
+store = CCSStore(strategy="lazy")
+```
+
+- 📦 `pip install "agent-coherence[langgraph]"`
+- 📄 [Paper on arXiv (2603.15183)](https://arxiv.org/abs/2603.15183) — formal protocol, TLA+ verification, simulation results
+- 📊 [Real benchmarks](#real-workload-benchmarks) — measured on actual LangGraph graphs
+- 🔧 [User guide](docs/ccsstore.md) — strategies, telemetry, examples
+
 ---
 
 ## The problem
 
-When multiple agents share working context - a plan, a codebase, a
-research document - most orchestration frameworks broadcast the full
-artifact to every agent on every step. On workloads with four or more
-agents and non-trivial artifacts, synchronization tokens dominate total
-cost.
+When multiple agents share working context, a plan, a codebase, a research
+document, most orchestration frameworks broadcast the full artifact to every
+agent on every step. On workloads with four or more agents and non-trivial
+artifacts, synchronization tokens dominate total cost.
 
-This is the same problem multi-core CPUs solved in the 1980s with MESI
-cache coherence. `agent-coherence` applies that protocol to shared
-artifacts in multi-agent pipelines.
+This is the same problem multi-core CPUs solved with MESI cache coherence.
+`agent-coherence` applies that protocol to shared artifacts in multi-agent
+pipelines.
 
 ## Quick start
 
@@ -33,19 +47,11 @@ pip install "agent-coherence[langgraph]"
 ```
 
 ```python
-# Before
-from langgraph.store.memory import InMemoryStore
-store = InMemoryStore()
-
-# After — one import change, no node code changes required
-from ccs.adapters import CCSStore
-store = CCSStore(strategy="lazy")
-
-graph = builder.compile(store=store)
+graph = builder.compile(store=CCSStore(strategy="lazy"))
 ```
 
-**Namespace convention:** `namespace[0]` is the agent identity; `namespace[1:]` is
-the artifact scope. Two agents writing to `("planner", "shared")` and
+**Namespace convention:** `namespace[0]` is the agent identity; `namespace[1:]`
+is the artifact scope. Two agents writing to `("planner", "shared")` and
 `("reviewer", "shared")` address the same artifact.
 
 **Observability** — pass `on_metric` to measure token savings:
@@ -106,36 +112,76 @@ python -m examples.code_review.main          # 3-agent, SHARED state demo
 python -m examples.research_pipeline.main    # 4-agent, 3 artifacts, 60% hit rate
 ```
 
-### Reproducing the paper's 95% number
+## Real-workload benchmarks
 
-The 95% figure in the benchmarks table comes from the simulation suite, not the
-LangGraph example. To reproduce it:
+Measured on real LangGraph `StateGraph` executions using
+`GenericFakeChatModel` with no live LLM API calls, so the results are
+reproducible in CI. Run them yourself:
 
 ```bash
-make reproduce
+python benchmarks/langgraph_real/bench_planner.py
+python benchmarks/langgraph_real/bench_code_review.py
+python benchmarks/langgraph_real/bench_high_churn.py
 ```
 
-The `examples/langgraph_planner/` demo shows CCSStore saving real tokens on a
-realistic graph — these are two separate claims and two separate entry points. See
-[docs/ccsstore.md#real-workload-benchmarks](docs/ccsstore.md#real-workload-benchmarks)
-for real LangGraph benchmark results (47–69% savings depending on write frequency).
+| Workload | Agents | Reads:Writes | Hit rate | Baseline tokens | CCSStore tokens | Savings |
+|---|---|---|---|---|---|---|
+| Planning (read-heavy) | 4 | 12:1 | 75% | 4,160 | 1,301 | **69%** |
+| Code review (moderate) | 3 | 8:3 | 60% | 5,320 | 2,835 | **47%** |
+| High-churn (write-heavy) | 4 | 8:4 | 50% | 3,250 | 2,317 | **29%** |
 
-## Benchmarks
+### How to read these numbers
 
-Four canonical multi-agent workloads, `n=4` agents, `m=3` artifacts at
-4,096 tokens each, 40 steps, 10 runs per config:
+**Savings scale with read/write ratio.** That's a property of the protocol, not
+an implementation quirk. Every write triggers an invalidation, which forces the
+next read to be a miss.
 
-| Workload    | Broadcast (baseline) | Coherent       | Savings |
-|-------------|----------------------|----------------|---------|
-| Planning    | 1,979,597 tokens     | 99,081         | 95.0%   |
-| Analysis    | 1,979,597 tokens     | 152,729        | 92.3%   |
-| Development | 1,979,597 tokens     | 232,021        | 88.3%   |
-| High-Churn  | 1,979,597 tokens     | 313,012        | 84.2%   |
+- **Read-heavy workloads (planners, reviewers, summarizers, retrievers): 60–70% savings.**
+- **Mixed workloads: 40–55% savings.**
+- **Write-heavy workloads: 25–35% savings.**
 
-Reproduce with `bash reproduce.sh`. See
-[REPRODUCE.md](REPRODUCE.md) for output mapping and baseline verification.
-Full protocol specification and experimental setup in
-[the paper](https://arxiv.org/abs/2603.15183).
+### Where the paper's 84–95% figures come from
+
+The [arXiv paper](https://arxiv.org/abs/2603.15183) reports 84–95% reduction in
+**simulation** under controlled assumptions: sparse reads, high
+steps-per-artifact ratios, and low artifact volatility. Those numbers represent
+the protocol's theoretical ceiling.
+
+The real-workload numbers above represent what teams see on real LangGraph
+graphs today. Both are honest measurements of different things:
+
+| | Simulation (paper) | Real LangGraph (this repo) |
+|---|---|---|
+| What's measured | Protocol-only token cost | Full graph execution token cost |
+| Workload | Synthetic, controlled volatility | Realistic agent patterns |
+| Best case | 95% (Planning) | 69% (Planning) |
+| Worst case | 84% (High-churn) | 29% (High-churn) |
+
+If you want to reproduce the simulation results from the paper, see
+[REPRODUCE.md](REPRODUCE.md).
+
+### What this means for adoption
+
+If your multi-agent workload has a read/write ratio above roughly `3:1`, which
+most planning, research, review, and analysis pipelines do, expect 50–70%
+savings in production. If your workload is write-heavy, expect 25–35%. Either
+way, the integration is a one-line import change.
+
+## What CCSStore is — and isn't
+
+**CCSStore is:**
+
+- A drop-in `BaseStore` replacement for LangGraph
+- A way to cut shared-artifact token costs on real multi-agent workloads
+- A way to detect stale-read bugs that trace-only tools can't see
+- Built on a TLA+-verified MESI protocol
+
+**CCSStore is not:**
+
+- A prompt compiler
+- A replacement for LangSmith or Braintrust
+- A guaranteed 95% savings tool
+- A general-purpose key-value store
 
 ## How it works
 
@@ -209,6 +255,36 @@ agents share state *while* they work. They compose.
 reduces per-agent prompt overhead but does not address inter-agent
 artifact synchronization. The two are complementary: prompt caching
 keeps the prefix cheap; coherence keeps the shared artifacts lean.
+
+## FAQ
+
+### The paper says 84–95%. Why does the README say 47–69%?
+
+Two different measurements, both honest. The paper measures protocol-only
+overhead in simulation under controlled assumptions. The README's 47–69% is
+what a real team running CCSStore on a real LangGraph graph will measure today
+across realistic workloads. Use the 47–69% number for ROI expectations. The
+84–95% number describes the protocol's theoretical ceiling under ideal
+conditions.
+
+### Why does the high-churn workload only save 29%?
+
+Write-heavy workloads are the protocol's lower bound by design. Every write
+triggers invalidation, which forces the next read to be a miss. If your agents
+are constantly modifying shared state, fewer reads get to be cache hits.
+
+### Will I see the simulation numbers in production?
+
+Almost certainly not. The simulation isolates the protocol from real-world
+factors like LangGraph's framework overhead, prompt construction, and extra
+artifact reads. If your workload has a read/write ratio above `3:1`, expect
+50–70% in production.
+
+### Can I get higher savings than 69%?
+
+Yes, but it requires architectural changes beyond CCSStore, for example
+partial-read APIs so agents fetch only the artifact fragments they need.
+CCSStore `v0.2` operates at the whole-artifact level.
 
 ## Status
 
