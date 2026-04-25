@@ -8,6 +8,7 @@ from .base import CoherenceAdapterCore
 from .ccsstore import CCSStore, StoreMetricEvent
 from .crewai import CrewAIAdapter
 from .langgraph import LangGraphAdapter
+from .telemetry import NoOpTelemetryExporter, TelemetryExporter, build_telemetry
 
 __all__ = [
     "CCSStore",
@@ -16,4 +17,7 @@ __all__ = [
     "CrewAIAdapter",
     "AutoGenAdapter",
     "StoreMetricEvent",
+    "TelemetryExporter",
+    "NoOpTelemetryExporter",
+    "build_telemetry",
 ]

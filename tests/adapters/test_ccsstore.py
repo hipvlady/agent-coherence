@@ -539,3 +539,81 @@ def test_metric_events_ordered_by_operation_sequence() -> None:
     store.batch(ops)
     assert events[0].operation == "put"
     assert events[1].operation == "get"
+
+
+# ---------------------------------------------------------------------------
+# Telemetry parameter
+# ---------------------------------------------------------------------------
+
+def test_ccsstore_default_has_noop_telemetry() -> None:
+    from ccs.adapters.telemetry import NoOpTelemetryExporter
+    store = _store()
+    assert isinstance(store._telemetry, NoOpTelemetryExporter)
+
+
+def test_ccsstore_telemetry_none_has_noop() -> None:
+    from ccs.adapters.telemetry import NoOpTelemetryExporter
+    store = _store(telemetry=None)
+    assert isinstance(store._telemetry, NoOpTelemetryExporter)
+
+
+def test_ccsstore_telemetry_exporter_receives_put_event() -> None:
+    from unittest.mock import MagicMock
+    from ccs.adapters.telemetry import TelemetryExporter
+
+    class CapturingExporter(TelemetryExporter):
+        def __init__(self):
+            self.events: list[StoreMetricEvent] = []
+        def on_event(self, event: StoreMetricEvent) -> None:
+            self.events.append(event)
+
+    exporter = CapturingExporter()
+    store = _store(telemetry=exporter)
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    assert len(exporter.events) == 1
+    assert exporter.events[0].operation == "put"
+
+
+def test_ccsstore_telemetry_exporter_receives_get_event() -> None:
+    from ccs.adapters.telemetry import TelemetryExporter
+
+    class CapturingExporter(TelemetryExporter):
+        def __init__(self):
+            self.events: list[StoreMetricEvent] = []
+        def on_event(self, event: StoreMetricEvent) -> None:
+            self.events.append(event)
+
+    exporter = CapturingExporter()
+    store = _store(telemetry=exporter)
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    exporter.events.clear()
+    _get(store, ("planner", "shared"), "plan")
+    assert len(exporter.events) == 1
+    assert exporter.events[0].operation == "get"
+
+
+def test_ccsstore_on_metric_and_telemetry_both_called() -> None:
+    from ccs.adapters.telemetry import TelemetryExporter
+
+    on_metric_events: list[StoreMetricEvent] = []
+
+    class CapturingExporter(TelemetryExporter):
+        def __init__(self):
+            self.events: list[StoreMetricEvent] = []
+        def on_event(self, event: StoreMetricEvent) -> None:
+            self.events.append(event)
+
+    exporter = CapturingExporter()
+    store = _store(on_metric=on_metric_events.append, telemetry=exporter)
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    assert len(on_metric_events) == 1
+    assert len(exporter.events) == 1
+    # Both receive the same event object
+    assert on_metric_events[0] is exporter.events[0]
+
+
+def test_ccsstore_telemetry_and_on_metric_none_no_error() -> None:
+    store = _store(telemetry=None, on_metric=None)
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    result = _get(store, ("planner", "shared"), "plan")
+    assert result is not None

@@ -10,7 +10,6 @@ import json
 import threading
 import uuid
 import warnings
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable
 
@@ -27,21 +26,12 @@ from langgraph.store.base import (
 )
 
 from ccs.adapters.base import CoherenceAdapterCore
+from ccs.adapters.events import StoreMetricEvent  # re-exported for public API compatibility
+from ccs.adapters.telemetry import TelemetryExporter, build_telemetry
 from ccs.core.states import MESIState
 from ccs.core.types import Artifact
 
-
-@dataclass
-class StoreMetricEvent:
-    """Emitted by CCSStore for each artifact operation when on_metric is set."""
-
-    operation: str
-    namespace: tuple[str, ...]
-    key: str
-    agent_name: str
-    tokens_consumed: int
-    cache_hit: bool
-    tick: int
+__all__ = ["CCSStore", "StoreMetricEvent"]
 
 
 class CCSStore(BaseStore):
@@ -61,10 +51,12 @@ class CCSStore(BaseStore):
         self,
         strategy: str = "lazy",
         on_metric: Callable[[StoreMetricEvent], None] | None = None,
+        telemetry: str | TelemetryExporter | None = None,
         **strategy_kwargs: Any,
     ) -> None:
         self.core = CoherenceAdapterCore(strategy_name=strategy, **strategy_kwargs)
         self._on_metric = on_metric
+        self._telemetry: TelemetryExporter = build_telemetry(telemetry)
         self._lock = threading.Lock()
         self._tick: int = 0
         # (scope, key) → artifact_id; scope is namespace[1:]
@@ -138,21 +130,21 @@ class CCSStore(BaseStore):
             resp = self.core.read(agent_name=agent_name, artifact_id=artifact_id, now_tick=tick)
             value = json.loads(resp.content) if resp.content else {}
 
-        if self._on_metric is not None:
+        tokens = 1 if cache_hit else self._estimate_tokens(value)
+        event = StoreMetricEvent(
+            operation="get",
+            namespace=namespace,
+            key=key,
+            agent_name=agent_name,
             # Cache hit: no content was fetched from the coordinator, so transmission cost is 0.
             # We emit max(1, 0) = 1 to acknowledge the access without counting redundant transfer.
-            tokens = 1 if cache_hit else self._estimate_tokens(value)
-            self._on_metric(
-                StoreMetricEvent(
-                    operation="get",
-                    namespace=namespace,
-                    key=key,
-                    agent_name=agent_name,
-                    tokens_consumed=tokens,
-                    cache_hit=cache_hit,
-                    tick=tick,
-                )
-            )
+            tokens_consumed=tokens,
+            cache_hit=cache_hit,
+            tick=tick,
+        )
+        if self._on_metric is not None:
+            self._on_metric(event)
+        self._telemetry.on_event(event)
 
         now = datetime.now(tz=timezone.utc)
         return Item(value=value, key=key, namespace=namespace, created_at=now, updated_at=now)
@@ -188,18 +180,18 @@ class CCSStore(BaseStore):
             self._namespace_index[full_ns] = set()
         self._namespace_index[full_ns].add(key)
 
+        event = StoreMetricEvent(
+            operation="put",
+            namespace=namespace,
+            key=key,
+            agent_name=agent_name,
+            tokens_consumed=self._estimate_tokens(value),
+            cache_hit=False,
+            tick=tick,
+        )
         if self._on_metric is not None:
-            self._on_metric(
-                StoreMetricEvent(
-                    operation="put",
-                    namespace=namespace,
-                    key=key,
-                    agent_name=agent_name,
-                    tokens_consumed=self._estimate_tokens(value),
-                    cache_hit=False,
-                    tick=tick,
-                )
-            )
+            self._on_metric(event)
+        self._telemetry.on_event(event)
 
     def _apply_delete(self, namespace: tuple[str, ...], key: str, tick: int) -> None:
         if len(namespace) < 2:
@@ -280,18 +272,18 @@ class CCSStore(BaseStore):
                     )
                 )
 
+                search_event = StoreMetricEvent(
+                    operation="search.hit",
+                    namespace=full_ns,
+                    key=key,
+                    agent_name=full_ns[0] if full_ns else "",
+                    tokens_consumed=self._estimate_tokens(value),
+                    cache_hit=False,
+                    tick=tick,
+                )
                 if self._on_metric is not None:
-                    self._on_metric(
-                        StoreMetricEvent(
-                            operation="search.hit",
-                            namespace=full_ns,
-                            key=key,
-                            agent_name=full_ns[0] if full_ns else "",
-                            tokens_consumed=self._estimate_tokens(value),
-                            cache_hit=False,
-                            tick=tick,
-                        )
-                    )
+                    self._on_metric(search_event)
+                self._telemetry.on_event(search_event)
 
         return results[op.offset : op.offset + op.limit]
 
