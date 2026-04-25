@@ -1,28 +1,18 @@
 # Copyright (c) 2026 Arbiter contributors.
 # The Coherence Protocol for AI Agents
 
-"""Telemetry exporter protocol and dispatcher for CCSStore."""
+"""Telemetry exporter protocol and dispatcher for CCSStore.
+
+Re-exports TelemetryExporter, NoOpTelemetryExporter, and StoreMetricEvent from
+ccs.adapters.events so callers only need to import from this package.
+"""
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+# Public re-exports — concrete implementations live in events.py (leaf node)
+from ccs.adapters.events import NoOpTelemetryExporter, StoreMetricEvent, TelemetryExporter
 
-from ccs.adapters.events import StoreMetricEvent
-
-
-class TelemetryExporter(ABC):
-    """Contract for CCSStore telemetry backends."""
-
-    @abstractmethod
-    def on_event(self, event: StoreMetricEvent) -> None:
-        """Called after each CCSStore operation."""
-
-
-class NoOpTelemetryExporter(TelemetryExporter):
-    """Default exporter — discards all events at zero cost."""
-
-    def on_event(self, event: StoreMetricEvent) -> None:
-        pass
+__all__ = ["TelemetryExporter", "NoOpTelemetryExporter", "StoreMetricEvent", "build_telemetry"]
 
 
 def build_telemetry(spec: str | TelemetryExporter | None) -> TelemetryExporter:
