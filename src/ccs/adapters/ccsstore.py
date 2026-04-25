@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 import uuid
 import warnings
@@ -28,8 +29,11 @@ from langgraph.store.base import (
 from ccs.adapters.base import CoherenceAdapterCore
 from ccs.adapters.events import StoreMetricEvent  # re-exported for public API compatibility
 from ccs.adapters.telemetry import TelemetryExporter, build_telemetry
+from ccs.core.exceptions import CoherenceError
 from ccs.core.states import MESIState
 from ccs.core.types import Artifact
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["CCSStore", "StoreMetricEvent"]
 
@@ -52,11 +56,15 @@ class CCSStore(BaseStore):
         strategy: str = "lazy",
         on_metric: Callable[[StoreMetricEvent], None] | None = None,
         telemetry: str | TelemetryExporter | None = None,
+        on_error: str = "strict",
         **strategy_kwargs: Any,
     ) -> None:
+        if on_error not in ("strict", "degrade"):
+            raise ValueError(f"on_error must be 'strict' or 'degrade'; got {on_error!r}")
         self.core = CoherenceAdapterCore(strategy_name=strategy, **strategy_kwargs)
         self._on_metric = on_metric
         self._telemetry: TelemetryExporter = build_telemetry(telemetry)
+        self._on_error = on_error
         self._lock = threading.Lock()
         self._tick: int = 0
         # (scope, key) → artifact_id; scope is namespace[1:]
@@ -66,6 +74,8 @@ class CCSStore(BaseStore):
         self._deleted_ids: set[uuid.UUID] = set()
         # full namespace (including agent) → set of keys; maintained on put/delete
         self._namespace_index: dict[tuple[str, ...], set[str]] = {}
+        # plain dict fallback when on_error="degrade"; keyed by (scope, key)
+        self._fallback_store: dict[tuple[tuple[str, ...], str], Any] = {}
 
     # ------------------------------------------------------------------
     # BaseStore interface — batch is the single implementation point
@@ -123,16 +133,28 @@ class CCSStore(BaseStore):
             MESIState.MODIFIED,
         )
 
+        degraded = False
         if cache_hit:
             raw = self.core.runtime(agent_name).content(artifact_id)
             value = json.loads(raw) if raw else {}
         else:
-            resp = self.core.read(agent_name=agent_name, artifact_id=artifact_id, now_tick=tick)
-            value = json.loads(resp.content) if resp.content else {}
+            try:
+                resp = self.core.read(agent_name=agent_name, artifact_id=artifact_id, now_tick=tick)
+                value = json.loads(resp.content) if resp.content else {}
+            except CoherenceError as exc:
+                if self._on_error == "strict":
+                    raise
+                logger.warning(
+                    "CCSStore: coherence error on get %r %r — degrading to fallback: %s",
+                    namespace, key, exc,
+                )
+                scope_key = (tuple(namespace[1:]), key)
+                value = self._fallback_store.get(scope_key, {})
+                degraded = True
 
         tokens = 1 if cache_hit else self._estimate_tokens(value)
         event = StoreMetricEvent(
-            operation="get",
+            operation="degraded" if degraded else "get",
             namespace=namespace,
             key=key,
             agent_name=agent_name,
@@ -171,9 +193,21 @@ class CCSStore(BaseStore):
         self._ensure_agent_registered(agent_name)
         artifact_id = self._ensure_artifact_registered(namespace, key)
 
-        self.core.write(
-            agent_name=agent_name, artifact_id=artifact_id, content=content_str, now_tick=tick
-        )
+        degraded = False
+        try:
+            self.core.write(
+                agent_name=agent_name, artifact_id=artifact_id, content=content_str, now_tick=tick
+            )
+        except CoherenceError as exc:
+            if self._on_error == "strict":
+                raise
+            logger.warning(
+                "CCSStore: coherence error on put %r %r — degrading to fallback: %s",
+                namespace, key, exc,
+            )
+            scope_key = (tuple(namespace[1:]), key)
+            self._fallback_store[scope_key] = value
+            degraded = True
 
         full_ns = tuple(namespace)
         if full_ns not in self._namespace_index:
@@ -181,7 +215,7 @@ class CCSStore(BaseStore):
         self._namespace_index[full_ns].add(key)
 
         event = StoreMetricEvent(
-            operation="put",
+            operation="degraded" if degraded else "put",
             namespace=namespace,
             key=key,
             agent_name=agent_name,

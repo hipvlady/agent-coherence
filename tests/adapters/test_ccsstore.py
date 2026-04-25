@@ -617,3 +617,90 @@ def test_ccsstore_telemetry_and_on_metric_none_no_error() -> None:
     _put(store, ("planner", "shared"), "plan", {"v": 1})
     result = _get(store, ("planner", "shared"), "plan")
     assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# Graceful degradation (on_error parameter)
+# ---------------------------------------------------------------------------
+
+def test_on_error_invalid_value_raises() -> None:
+    with pytest.raises(ValueError, match="on_error"):
+        CCSStore(on_error="bad")
+
+
+def test_on_error_strict_is_default() -> None:
+    store = _store()
+    assert store._on_error == "strict"
+
+
+def test_on_error_strict_reraises_coherence_error_on_get() -> None:
+    from unittest.mock import patch
+    from ccs.core.exceptions import CoherenceError
+
+    store = _store(on_error="strict")
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    with patch.object(store.core, "read", side_effect=CoherenceError("simulated")):
+        with pytest.raises(CoherenceError):
+            _get(store, ("reviewer", "shared"), "plan")  # different agent → cache miss → core.read
+
+
+def test_on_error_strict_reraises_coherence_error_on_put() -> None:
+    from unittest.mock import patch
+    from ccs.core.exceptions import CoherenceError
+
+    store = _store(on_error="strict")
+    with patch.object(store.core, "write", side_effect=CoherenceError("simulated")):
+        with pytest.raises(CoherenceError):
+            _put(store, ("planner", "shared"), "plan", {"v": 1})
+
+
+def test_on_error_degrade_put_emits_degraded_event() -> None:
+    from unittest.mock import patch
+    from ccs.core.exceptions import CoherenceError
+
+    events: list[StoreMetricEvent] = []
+    store = _store(on_error="degrade", on_metric=events.append)
+    with patch.object(store.core, "write", side_effect=CoherenceError("simulated")):
+        _put(store, ("planner", "shared"), "plan", {"v": 1})
+    assert events[0].operation == "degraded"
+
+
+def test_on_error_degrade_get_emits_degraded_event() -> None:
+    from unittest.mock import patch
+    from ccs.core.exceptions import CoherenceError
+
+    events: list[StoreMetricEvent] = []
+    store = _store(on_error="degrade", on_metric=events.append)
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    events.clear()
+    with patch.object(store.core, "read", side_effect=CoherenceError("simulated")):
+        _get(store, ("reviewer", "shared"), "plan")  # reviewer cache miss → core.read → degrade
+    assert events[0].operation == "degraded"
+
+
+def test_on_error_degrade_get_returns_fallback_value() -> None:
+    from unittest.mock import patch
+    from ccs.core.exceptions import CoherenceError
+
+    store = _store(on_error="degrade")
+    # Degraded put — value lands in _fallback_store
+    with patch.object(store.core, "write", side_effect=CoherenceError("simulated")):
+        _put(store, ("planner", "shared"), "plan", {"v": 42})
+    # Degraded get from same scope — retrieves from _fallback_store
+    with patch.object(store.core, "read", side_effect=CoherenceError("simulated")):
+        result = _get(store, ("reviewer", "shared"), "plan")
+    assert result is not None
+    assert result.value == {"v": 42}
+
+
+def test_on_error_degrade_does_not_raise_on_coherence_error() -> None:
+    from unittest.mock import patch
+    from ccs.core.exceptions import CoherenceError
+
+    store = _store(on_error="degrade")
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    # Neither put nor get should raise when on_error="degrade"
+    with patch.object(store.core, "write", side_effect=CoherenceError("simulated")):
+        _put(store, ("planner", "shared"), "plan", {"v": 2})  # no raise
+    with patch.object(store.core, "read", side_effect=CoherenceError("simulated")):
+        _get(store, ("reviewer", "shared"), "plan")  # no raise
