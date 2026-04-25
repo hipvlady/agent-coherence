@@ -390,7 +390,7 @@ def test_metric_get_cache_miss_false() -> None:
     assert events[0].cache_hit is False
 
 
-def test_metric_tokens_consumed_estimation() -> None:
+def test_metric_tokens_consumed_estimation_put() -> None:
     events: list[StoreMetricEvent] = []
     store = _store(on_metric=events.append)
     value = {"content": "x" * 400}
@@ -398,6 +398,28 @@ def test_metric_tokens_consumed_estimation() -> None:
     put_event = next(e for e in events if e.operation == "put")
     expected = max(1, len(json.dumps(value, sort_keys=True, separators=(",", ":"))) // 4)
     assert put_event.tokens_consumed == expected
+
+
+def test_metric_tokens_consumed_cache_miss_is_full_size() -> None:
+    events: list[StoreMetricEvent] = []
+    store = _store(on_metric=events.append)
+    value = {"content": "x" * 400}
+    _put(store, ("planner", "shared"), "plan", value)
+    events.clear()
+    _get(store, ("reviewer", "shared"), "plan")  # cache miss
+    get_event = events[0]
+    expected = max(1, len(json.dumps(value, sort_keys=True, separators=(",", ":"))) // 4)
+    assert get_event.tokens_consumed == expected
+
+
+def test_metric_tokens_consumed_cache_hit_is_one() -> None:
+    events: list[StoreMetricEvent] = []
+    store = _store(on_metric=events.append)
+    _put(store, ("planner", "shared"), "plan", {"content": "x" * 400})
+    events.clear()
+    _get(store, ("planner", "shared"), "plan")  # cache hit (same agent that wrote)
+    get_event = events[0]
+    assert get_event.tokens_consumed == 1
 
 
 def test_metric_custom_size_override() -> None:

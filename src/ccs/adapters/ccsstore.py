@@ -139,13 +139,16 @@ class CCSStore(BaseStore):
             value = json.loads(resp.content) if resp.content else {}
 
         if self._on_metric is not None:
+            # Cache hit: no content was fetched from the coordinator, so transmission cost is 0.
+            # We emit max(1, 0) = 1 to acknowledge the access without counting redundant transfer.
+            tokens = 1 if cache_hit else self._estimate_tokens(value)
             self._on_metric(
                 StoreMetricEvent(
                     operation="get",
                     namespace=namespace,
                     key=key,
                     agent_name=agent_name,
-                    tokens_consumed=self._estimate_tokens(value),
+                    tokens_consumed=tokens,
                     cache_hit=cache_hit,
                     tick=tick,
                 )
