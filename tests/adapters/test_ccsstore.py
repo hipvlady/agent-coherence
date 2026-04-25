@@ -274,6 +274,15 @@ def test_search_filter_explicit_ne() -> None:
     assert results[0].key == "a"
 
 
+def test_search_filter_explicit_eq_no_match_excluded() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "a", {"status": "active"})
+    _put(store, ("planner", "shared"), "b", {"status": "draft"})
+    results = store.search(("planner",), filter={"status": {"$eq": "active"}})
+    assert len(results) == 1
+    assert results[0].key == "a"
+
+
 def test_search_filter_unsupported_operator_raises() -> None:
     store = _store()
     _put(store, ("planner", "shared"), "a", {"score": 5})
@@ -486,6 +495,38 @@ def test_batch_value_error_on_short_namespace_propagates() -> None:
     store = _store()
     with pytest.raises(ValueError):
         store.batch([GetOp(namespace=("only_one",), key="k")])
+
+
+def test_list_namespaces_max_depth_truncates_and_deduplicates() -> None:
+    store = _store()
+    _put(store, ("planner", "shared", "plans"), "a", {"v": 1})
+    _put(store, ("planner", "shared", "plans"), "b", {"v": 2})
+    _put(store, ("planner", "private"), "c", {"v": 3})
+    # max_depth=2 → unique tuples of length 2
+    results = store.list_namespaces(prefix=(), max_depth=2)
+    assert ("planner", "shared") in results
+    assert ("planner", "private") in results
+    # original 3-element namespace should NOT appear
+    assert ("planner", "shared", "plans") not in results
+
+
+def test_delete_short_namespace_raises_value_error() -> None:
+    store = _store()
+    with pytest.raises(ValueError):
+        store.batch([PutOp(namespace=("planner",), key="plan", value=None)])
+
+
+def test_re_registration_after_delete_clears_deleted_ids() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    _delete(store, ("planner", "shared"), "plan")
+
+    from uuid import NAMESPACE_URL, uuid5
+    artifact_id = uuid5(NAMESPACE_URL, "ccs-artifact:shared:plan")
+    assert artifact_id in store._deleted_ids
+
+    _put(store, ("planner", "shared"), "plan", {"v": 2})
+    assert artifact_id not in store._deleted_ids
 
 
 def test_metric_events_ordered_by_operation_sequence() -> None:
