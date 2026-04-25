@@ -1,0 +1,706 @@
+# Copyright (c) 2026 Arbiter contributors.
+# The Coherence Protocol for AI Agents
+
+"""Tests for CCSStore LangGraph BaseStore adapter."""
+
+from __future__ import annotations
+
+import json
+import warnings
+from typing import Any
+from uuid import NAMESPACE_URL, uuid5
+
+import pytest
+
+from ccs.adapters.ccsstore import CCSStore, StoreMetricEvent
+from ccs.core.states import MESIState
+from langgraph.store.base import GetOp, ListNamespacesOp, MatchCondition, PutOp, SearchOp
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _store(strategy: str = "lazy", **kwargs: Any) -> CCSStore:
+    return CCSStore(strategy=strategy, **kwargs)
+
+
+def _put(store: CCSStore, namespace: tuple[str, ...], key: str, value: dict) -> None:
+    store.batch([PutOp(namespace=namespace, key=key, value=value)])
+
+
+def _get(store: CCSStore, namespace: tuple[str, ...], key: str):
+    return store.batch([GetOp(namespace=namespace, key=key)])[0]
+
+
+def _delete(store: CCSStore, namespace: tuple[str, ...], key: str) -> None:
+    store.batch([PutOp(namespace=namespace, key=key, value=None)])
+
+
+# ---------------------------------------------------------------------------
+# Get
+# ---------------------------------------------------------------------------
+
+def test_get_after_put_same_agent_is_cache_hit() -> None:
+    events: list[StoreMetricEvent] = []
+    store = _store(on_metric=events.append)
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    result = _get(store, ("planner", "shared"), "plan")
+
+    assert result is not None
+    assert result.value == {"v": 1}
+    get_event = next(e for e in events if e.operation == "get")
+    assert get_event.cache_hit is True
+
+
+def test_get_after_peer_put_is_cache_miss() -> None:
+    events: list[StoreMetricEvent] = []
+    store = _store(on_metric=events.append)
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    # First get by reviewer: MESI miss → fetch
+    result = _get(store, ("reviewer", "shared"), "plan")
+
+    assert result is not None
+    assert result.value == {"v": 1}
+    get_event = next(e for e in events if e.operation == "get")
+    assert get_event.cache_hit is False
+
+
+def test_get_unknown_key_returns_none() -> None:
+    store = _store()
+    result = _get(store, ("planner", "shared"), "nonexistent")
+    assert result is None
+
+
+def test_get_unknown_key_does_not_emit_metric() -> None:
+    events: list[StoreMetricEvent] = []
+    store = _store(on_metric=events.append)
+    _get(store, ("planner", "shared"), "nonexistent")
+    assert not events
+
+
+def test_get_short_namespace_raises_value_error() -> None:
+    store = _store()
+    with pytest.raises(ValueError):
+        store.batch([GetOp(namespace=("planner",), key="plan")])
+
+
+def test_get_lazy_registers_agent_on_first_access() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "plan", {"x": 1})
+    # reviewer has never been registered; get should trigger lazy registration
+    result = _get(store, ("reviewer", "shared"), "plan")
+    assert result is not None
+    assert "reviewer" in store._known_agents
+
+
+def test_get_two_agents_both_reach_shared_state() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "plan", {"x": 1})
+    _get(store, ("planner", "shared"), "plan")
+    _get(store, ("reviewer", "shared"), "plan")
+
+    artifact_id = uuid5(NAMESPACE_URL, "ccs-artifact:shared:plan")
+    # Check the coordinator registry (ground truth), not the local cache.
+    # The local cache may lag behind — the registry is always consistent.
+    planner_id = store.core.agent_id_for("planner")
+    reviewer_id = store.core.agent_id_for("reviewer")
+    assert store.core.registry.get_agent_state(artifact_id, planner_id) == MESIState.SHARED
+    assert store.core.registry.get_agent_state(artifact_id, reviewer_id) == MESIState.SHARED
+
+
+def test_get_after_peer_write_is_invalidated_then_refreshed() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    # reviewer reads → SHARED
+    _get(store, ("reviewer", "shared"), "plan")
+    # planner writes new version → reviewer invalidated
+    _put(store, ("planner", "shared"), "plan", {"v": 2})
+
+    artifact_id = uuid5(NAMESPACE_URL, "ccs-artifact:shared:plan")
+    reviewer_entry = store.core.runtime("reviewer").cache.get(artifact_id)
+    assert reviewer_entry is not None
+    assert reviewer_entry.state == MESIState.INVALID
+
+    result = _get(store, ("reviewer", "shared"), "plan")
+    assert result is not None
+    assert result.value == {"v": 2}
+
+
+# ---------------------------------------------------------------------------
+# Put
+# ---------------------------------------------------------------------------
+
+def test_put_creates_artifact_on_first_write() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    result = _get(store, ("planner", "shared"), "plan")
+    assert result is not None
+    assert result.value == {"v": 1}
+
+
+def test_put_second_write_increments_version() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    _put(store, ("planner", "shared"), "plan", {"v": 2})
+    result = _get(store, ("planner", "shared"), "plan")
+    assert result is not None
+    assert result.value == {"v": 2}
+
+
+def test_put_short_namespace_raises_value_error() -> None:
+    store = _store()
+    with pytest.raises(ValueError):
+        store.batch([PutOp(namespace=("planner",), key="plan", value={"x": 1})])
+
+
+def test_put_ttl_non_none_emits_user_warning() -> None:
+    store = _store()
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        store.batch([PutOp(namespace=("planner", "shared"), key="plan", value={"v": 1}, ttl=60.0)])
+    assert any(issubclass(warning.category, UserWarning) for warning in w)
+
+
+def test_put_index_param_accepted_without_error() -> None:
+    store = _store()
+    store.batch([PutOp(namespace=("planner", "shared"), key="plan", value={"v": 1}, index=["v"])])
+
+
+def test_put_triggers_invalidation_to_peers() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    _get(store, ("reviewer", "shared"), "plan")
+
+    artifact_id = uuid5(NAMESPACE_URL, "ccs-artifact:shared:plan")
+    reviewer_before = store.core.runtime("reviewer").cache.get(artifact_id)
+    assert reviewer_before is not None and reviewer_before.state == MESIState.SHARED
+
+    _put(store, ("planner", "shared"), "plan", {"v": 2})
+
+    reviewer_after = store.core.runtime("reviewer").cache.get(artifact_id)
+    assert reviewer_after is not None and reviewer_after.state == MESIState.INVALID
+
+
+def test_put_emits_metric_event() -> None:
+    events: list[StoreMetricEvent] = []
+    store = _store(on_metric=events.append)
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    put_events = [e for e in events if e.operation == "put"]
+    assert len(put_events) == 1
+    assert put_events[0].agent_name == "planner"
+    assert put_events[0].cache_hit is False
+
+
+# ---------------------------------------------------------------------------
+# Delete
+# ---------------------------------------------------------------------------
+
+def test_delete_makes_subsequent_get_return_none() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    _delete(store, ("planner", "shared"), "plan")
+    assert _get(store, ("planner", "shared"), "plan") is None
+
+
+def test_delete_absent_key_is_silent_no_op() -> None:
+    store = _store()
+    _delete(store, ("planner", "shared"), "nonexistent")  # must not raise
+
+
+def test_delete_then_put_same_key_re_registers_successfully() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    _delete(store, ("planner", "shared"), "plan")
+    _put(store, ("planner", "shared"), "plan", {"v": 2})
+    result = _get(store, ("planner", "shared"), "plan")
+    assert result is not None
+    assert result.value == {"v": 2}
+
+
+def test_delete_sends_invalidation_to_peers_no_coherence_error() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    _get(store, ("reviewer", "shared"), "plan")  # reviewer caches it
+
+    # delete must propagate to reviewer without raising CoherenceError
+    _delete(store, ("planner", "shared"), "plan")
+
+    # reviewer get returns None (artifact gone)
+    assert _get(store, ("reviewer", "shared"), "plan") is None
+
+
+def test_delete_does_not_emit_metric_event() -> None:
+    events: list[StoreMetricEvent] = []
+    store = _store(on_metric=events.append)
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    events.clear()
+    _delete(store, ("planner", "shared"), "plan")
+    assert not events
+
+
+# ---------------------------------------------------------------------------
+# Search
+# ---------------------------------------------------------------------------
+
+def test_search_by_agent_prefix_scopes_correctly() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "plan", {"status": "active"})
+    _put(store, ("reviewer", "shared"), "notes", {"status": "draft"})
+
+    results = store.search(("planner",))
+    keys = [r.key for r in results]
+    assert "plan" in keys
+    assert "notes" not in keys
+
+
+def test_search_filter_primitive_eq() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "a", {"status": "active"})
+    _put(store, ("planner", "shared"), "b", {"status": "draft"})
+
+    results = store.search(("planner",), filter={"status": "active"})
+    assert len(results) == 1
+    assert results[0].key == "a"
+
+
+def test_search_filter_explicit_ne() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "a", {"status": "active"})
+    _put(store, ("planner", "shared"), "b", {"status": "draft"})
+
+    results = store.search(("planner",), filter={"status": {"$ne": "draft"}})
+    assert len(results) == 1
+    assert results[0].key == "a"
+
+
+def test_search_filter_explicit_eq_no_match_excluded() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "a", {"status": "active"})
+    _put(store, ("planner", "shared"), "b", {"status": "draft"})
+    results = store.search(("planner",), filter={"status": {"$eq": "active"}})
+    assert len(results) == 1
+    assert results[0].key == "a"
+
+
+def test_search_filter_unsupported_operator_raises() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "a", {"score": 5})
+    with pytest.raises(NotImplementedError):
+        store.search(("planner",), filter={"score": {"$gt": 3}})
+
+
+def test_search_query_param_emits_warning_returns_results() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "a", {"x": 1})
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        results = store.search(("planner",), query="something")
+    assert any(issubclass(warning.category, UserWarning) for warning in w)
+    assert len(results) == 1  # still returns results, just unranked
+
+
+def test_search_does_not_change_mesi_state() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    artifact_id = uuid5(NAMESPACE_URL, "ccs-artifact:shared:plan")
+
+    # planner holds MODIFIED after put
+    planner_entry_before = store.core.runtime("planner").cache.get(artifact_id)
+    state_before = planner_entry_before.state if planner_entry_before else None
+
+    store.search(("planner",))
+
+    planner_entry_after = store.core.runtime("planner").cache.get(artifact_id)
+    state_after = planner_entry_after.state if planner_entry_after else None
+    assert state_before == state_after
+
+
+def test_search_before_any_writes_returns_empty() -> None:
+    store = _store()
+    assert store.search(("planner",)) == []
+
+
+def test_search_emits_one_metric_per_result() -> None:
+    events: list[StoreMetricEvent] = []
+    store = _store(on_metric=events.append)
+    _put(store, ("planner", "shared"), "a", {"x": 1})
+    _put(store, ("planner", "shared"), "b", {"x": 2})
+    events.clear()
+    store.search(("planner",))
+    search_events = [e for e in events if e.operation == "search.hit"]
+    assert len(search_events) == 2
+
+
+# ---------------------------------------------------------------------------
+# List namespaces
+# ---------------------------------------------------------------------------
+
+def test_list_namespaces_no_writes_returns_empty() -> None:
+    store = _store()
+    assert store.list_namespaces(prefix=()) == []
+
+
+def test_list_namespaces_after_two_puts_shows_both() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    _put(store, ("reviewer", "notes"), "review", {"v": 1})
+    namespaces = store.list_namespaces(prefix=())
+    assert ("planner", "shared") in namespaces
+    assert ("reviewer", "notes") in namespaces
+
+
+def test_list_namespaces_prefix_condition_filters() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    _put(store, ("reviewer", "notes"), "review", {"v": 1})
+    results = store.list_namespaces(prefix=("planner",))
+    assert ("planner", "shared") in results
+    assert ("reviewer", "notes") not in results
+
+
+def test_list_namespaces_suffix_condition_filters() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    _put(store, ("reviewer", "shared"), "notes", {"v": 1})
+    _put(store, ("executor", "private"), "task", {"v": 1})
+    results = store.list_namespaces(suffix=("shared",))
+    assert ("planner", "shared") in results
+    assert ("reviewer", "shared") in results
+    assert ("executor", "private") not in results
+
+
+# ---------------------------------------------------------------------------
+# Metrics
+# ---------------------------------------------------------------------------
+
+def test_on_metric_none_default_no_error() -> None:
+    store = _store()  # on_metric=None
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    _get(store, ("planner", "shared"), "plan")  # no error
+
+
+def test_metric_get_cache_hit_true() -> None:
+    events: list[StoreMetricEvent] = []
+    store = _store(on_metric=events.append)
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    events.clear()
+    _get(store, ("planner", "shared"), "plan")
+    assert events[0].cache_hit is True
+    assert events[0].operation == "get"
+
+
+def test_metric_get_cache_miss_false() -> None:
+    events: list[StoreMetricEvent] = []
+    store = _store(on_metric=events.append)
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    events.clear()
+    _get(store, ("reviewer", "shared"), "plan")
+    assert events[0].cache_hit is False
+
+
+def test_metric_tokens_consumed_estimation_put() -> None:
+    events: list[StoreMetricEvent] = []
+    store = _store(on_metric=events.append)
+    value = {"content": "x" * 400}
+    _put(store, ("planner", "shared"), "plan", value)
+    put_event = next(e for e in events if e.operation == "put")
+    expected = max(1, len(json.dumps(value, sort_keys=True, separators=(",", ":"))) // 4)
+    assert put_event.tokens_consumed == expected
+
+
+def test_metric_tokens_consumed_cache_miss_is_full_size() -> None:
+    events: list[StoreMetricEvent] = []
+    store = _store(on_metric=events.append)
+    value = {"content": "x" * 400}
+    _put(store, ("planner", "shared"), "plan", value)
+    events.clear()
+    _get(store, ("reviewer", "shared"), "plan")  # cache miss
+    get_event = events[0]
+    expected = max(1, len(json.dumps(value, sort_keys=True, separators=(",", ":"))) // 4)
+    assert get_event.tokens_consumed == expected
+
+
+def test_metric_tokens_consumed_cache_hit_is_one() -> None:
+    events: list[StoreMetricEvent] = []
+    store = _store(on_metric=events.append)
+    _put(store, ("planner", "shared"), "plan", {"content": "x" * 400})
+    events.clear()
+    _get(store, ("planner", "shared"), "plan")  # cache hit (same agent that wrote)
+    get_event = events[0]
+    assert get_event.tokens_consumed == 1
+
+
+def test_metric_custom_size_override() -> None:
+    events: list[StoreMetricEvent] = []
+    store = _store(on_metric=events.append)
+    _put(store, ("planner", "shared"), "plan", {"data": "x", "__ccs_size_tokens__": 42})
+    put_event = next(e for e in events if e.operation == "put")
+    assert put_event.tokens_consumed == 42
+
+
+# ---------------------------------------------------------------------------
+# Tick and threading
+# ---------------------------------------------------------------------------
+
+def test_tick_starts_at_zero_increments_per_batch() -> None:
+    store = _store()
+    assert store._tick == 0
+    store.batch([PutOp(namespace=("planner", "shared"), key="a", value={"x": 1})])
+    assert store._tick == 1
+    store.batch([PutOp(namespace=("planner", "shared"), key="b", value={"x": 2})])
+    assert store._tick == 2
+
+
+def test_tick_appears_in_metric_event() -> None:
+    events: list[StoreMetricEvent] = []
+    store = _store(on_metric=events.append)
+    store.batch([PutOp(namespace=("planner", "shared"), key="a", value={"x": 1})])
+    assert events[0].tick == 1
+
+
+def test_abatch_returns_same_as_batch() -> None:
+    import asyncio
+
+    store = _store()
+    ops = [PutOp(namespace=("planner", "shared"), key="a", value={"x": 1})]
+    batch_result = store.batch(ops)
+
+    store2 = _store()
+    abatch_result = asyncio.run(store2.abatch(ops))
+    # Both return [None] for a single PutOp
+    assert batch_result == abatch_result
+
+
+# ---------------------------------------------------------------------------
+# Full batch dispatch
+# ---------------------------------------------------------------------------
+
+def test_batch_mixed_ops_returns_results_in_order() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "a", {"v": 1})
+    ops = [
+        GetOp(namespace=("planner", "shared"), key="a"),
+        PutOp(namespace=("planner", "shared"), key="b", value={"v": 2}),
+        SearchOp(namespace_prefix=("planner",)),
+    ]
+    results = store.batch(ops)
+    assert len(results) == 3
+    assert results[0] is not None and results[0].value == {"v": 1}  # Item from Get
+    assert results[1] is None  # Put returns None
+    assert isinstance(results[2], list)  # Search returns list
+
+
+def test_batch_value_error_on_short_namespace_propagates() -> None:
+    store = _store()
+    with pytest.raises(ValueError):
+        store.batch([GetOp(namespace=("only_one",), key="k")])
+
+
+def test_list_namespaces_max_depth_truncates_and_deduplicates() -> None:
+    store = _store()
+    _put(store, ("planner", "shared", "plans"), "a", {"v": 1})
+    _put(store, ("planner", "shared", "plans"), "b", {"v": 2})
+    _put(store, ("planner", "private"), "c", {"v": 3})
+    # max_depth=2 → unique tuples of length 2
+    results = store.list_namespaces(prefix=(), max_depth=2)
+    assert ("planner", "shared") in results
+    assert ("planner", "private") in results
+    # original 3-element namespace should NOT appear
+    assert ("planner", "shared", "plans") not in results
+
+
+def test_delete_short_namespace_raises_value_error() -> None:
+    store = _store()
+    with pytest.raises(ValueError):
+        store.batch([PutOp(namespace=("planner",), key="plan", value=None)])
+
+
+def test_re_registration_after_delete_clears_deleted_ids() -> None:
+    store = _store()
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    _delete(store, ("planner", "shared"), "plan")
+
+    from uuid import NAMESPACE_URL, uuid5
+    artifact_id = uuid5(NAMESPACE_URL, "ccs-artifact:shared:plan")
+    assert artifact_id in store._deleted_ids
+
+    _put(store, ("planner", "shared"), "plan", {"v": 2})
+    assert artifact_id not in store._deleted_ids
+
+
+def test_metric_events_ordered_by_operation_sequence() -> None:
+    events: list[StoreMetricEvent] = []
+    store = _store(on_metric=events.append)
+    ops = [
+        PutOp(namespace=("planner", "shared"), key="a", value={"x": 1}),
+        GetOp(namespace=("planner", "shared"), key="a"),
+    ]
+    store.batch(ops)
+    assert events[0].operation == "put"
+    assert events[1].operation == "get"
+
+
+# ---------------------------------------------------------------------------
+# Telemetry parameter
+# ---------------------------------------------------------------------------
+
+def test_ccsstore_default_has_noop_telemetry() -> None:
+    from ccs.adapters.telemetry import NoOpTelemetryExporter
+    store = _store()
+    assert isinstance(store._telemetry, NoOpTelemetryExporter)
+
+
+def test_ccsstore_telemetry_none_has_noop() -> None:
+    from ccs.adapters.telemetry import NoOpTelemetryExporter
+    store = _store(telemetry=None)
+    assert isinstance(store._telemetry, NoOpTelemetryExporter)
+
+
+def test_ccsstore_telemetry_exporter_receives_put_event() -> None:
+    from unittest.mock import MagicMock
+    from ccs.adapters.telemetry import TelemetryExporter
+
+    class CapturingExporter(TelemetryExporter):
+        def __init__(self):
+            self.events: list[StoreMetricEvent] = []
+        def on_event(self, event: StoreMetricEvent) -> None:
+            self.events.append(event)
+
+    exporter = CapturingExporter()
+    store = _store(telemetry=exporter)
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    assert len(exporter.events) == 1
+    assert exporter.events[0].operation == "put"
+
+
+def test_ccsstore_telemetry_exporter_receives_get_event() -> None:
+    from ccs.adapters.telemetry import TelemetryExporter
+
+    class CapturingExporter(TelemetryExporter):
+        def __init__(self):
+            self.events: list[StoreMetricEvent] = []
+        def on_event(self, event: StoreMetricEvent) -> None:
+            self.events.append(event)
+
+    exporter = CapturingExporter()
+    store = _store(telemetry=exporter)
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    exporter.events.clear()
+    _get(store, ("planner", "shared"), "plan")
+    assert len(exporter.events) == 1
+    assert exporter.events[0].operation == "get"
+
+
+def test_ccsstore_on_metric_and_telemetry_both_called() -> None:
+    from ccs.adapters.telemetry import TelemetryExporter
+
+    on_metric_events: list[StoreMetricEvent] = []
+
+    class CapturingExporter(TelemetryExporter):
+        def __init__(self):
+            self.events: list[StoreMetricEvent] = []
+        def on_event(self, event: StoreMetricEvent) -> None:
+            self.events.append(event)
+
+    exporter = CapturingExporter()
+    store = _store(on_metric=on_metric_events.append, telemetry=exporter)
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    assert len(on_metric_events) == 1
+    assert len(exporter.events) == 1
+    # Both receive the same event object
+    assert on_metric_events[0] is exporter.events[0]
+
+
+def test_ccsstore_telemetry_and_on_metric_none_no_error() -> None:
+    store = _store(telemetry=None, on_metric=None)
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    result = _get(store, ("planner", "shared"), "plan")
+    assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# Graceful degradation (on_error parameter)
+# ---------------------------------------------------------------------------
+
+def test_on_error_invalid_value_raises() -> None:
+    with pytest.raises(ValueError, match="on_error"):
+        CCSStore(on_error="bad")
+
+
+def test_on_error_strict_is_default() -> None:
+    store = _store()
+    assert store._on_error == "strict"
+
+
+def test_on_error_strict_reraises_coherence_error_on_get() -> None:
+    from unittest.mock import patch
+    from ccs.core.exceptions import CoherenceError
+
+    store = _store(on_error="strict")
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    with patch.object(store.core, "read", side_effect=CoherenceError("simulated")):
+        with pytest.raises(CoherenceError):
+            _get(store, ("reviewer", "shared"), "plan")  # different agent → cache miss → core.read
+
+
+def test_on_error_strict_reraises_coherence_error_on_put() -> None:
+    from unittest.mock import patch
+    from ccs.core.exceptions import CoherenceError
+
+    store = _store(on_error="strict")
+    with patch.object(store.core, "write", side_effect=CoherenceError("simulated")):
+        with pytest.raises(CoherenceError):
+            _put(store, ("planner", "shared"), "plan", {"v": 1})
+
+
+def test_on_error_degrade_put_emits_degraded_event() -> None:
+    from unittest.mock import patch
+    from ccs.core.exceptions import CoherenceError
+
+    events: list[StoreMetricEvent] = []
+    store = _store(on_error="degrade", on_metric=events.append)
+    with patch.object(store.core, "write", side_effect=CoherenceError("simulated")):
+        _put(store, ("planner", "shared"), "plan", {"v": 1})
+    assert events[0].operation == "degraded"
+
+
+def test_on_error_degrade_get_emits_degraded_event() -> None:
+    from unittest.mock import patch
+    from ccs.core.exceptions import CoherenceError
+
+    events: list[StoreMetricEvent] = []
+    store = _store(on_error="degrade", on_metric=events.append)
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    events.clear()
+    with patch.object(store.core, "read", side_effect=CoherenceError("simulated")):
+        _get(store, ("reviewer", "shared"), "plan")  # reviewer cache miss → core.read → degrade
+    assert events[0].operation == "degraded"
+
+
+def test_on_error_degrade_get_returns_fallback_value() -> None:
+    from unittest.mock import patch
+    from ccs.core.exceptions import CoherenceError
+
+    store = _store(on_error="degrade")
+    # Degraded put — value lands in _fallback_store
+    with patch.object(store.core, "write", side_effect=CoherenceError("simulated")):
+        _put(store, ("planner", "shared"), "plan", {"v": 42})
+    # Degraded get from same scope — retrieves from _fallback_store
+    with patch.object(store.core, "read", side_effect=CoherenceError("simulated")):
+        result = _get(store, ("reviewer", "shared"), "plan")
+    assert result is not None
+    assert result.value == {"v": 42}
+
+
+def test_on_error_degrade_does_not_raise_on_coherence_error() -> None:
+    from unittest.mock import patch
+    from ccs.core.exceptions import CoherenceError
+
+    store = _store(on_error="degrade")
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    # Neither put nor get should raise when on_error="degrade"
+    with patch.object(store.core, "write", side_effect=CoherenceError("simulated")):
+        _put(store, ("planner", "shared"), "plan", {"v": 2})  # no raise
+    with patch.object(store.core, "read", side_effect=CoherenceError("simulated")):
+        _get(store, ("reviewer", "shared"), "plan")  # no raise

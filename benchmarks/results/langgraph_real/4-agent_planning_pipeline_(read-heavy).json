@@ -1,0 +1,14 @@
+{
+  "label": "4-agent planning pipeline (read-heavy)",
+  "baseline_tokens": 4160,
+  "ccs_tokens": 1301,
+  "cache_hit_rate": 0.75,
+  "token_reduction_pct": 68.73,
+  "num_ops": 13,
+  "num_writes": 1,
+  "num_reads": 12,
+  "num_hits": 9,
+  "num_misses": 3,
+  "content_tokens": 320,
+  "elapsed_s": 0.0154
+}

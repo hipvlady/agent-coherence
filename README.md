@@ -26,47 +26,99 @@ This is the same problem multi-core CPUs solved in the 1980s with MESI
 cache coherence. `agent-coherence` applies that protocol to shared
 artifacts in multi-agent pipelines.
 
-## Install
+## Quick start
 
 ```bash
-pip install agent-coherence
+pip install "agent-coherence[langgraph]"
 ```
 
-## Quick start - LangGraph
+```python
+# Before
+from langgraph.store.memory import InMemoryStore
+store = InMemoryStore()
+
+# After — one import change, no node code changes required
+from ccs.adapters import CCSStore
+store = CCSStore(strategy="lazy")
+
+graph = builder.compile(store=store)
+```
+
+**Namespace convention:** `namespace[0]` is the agent identity; `namespace[1:]` is
+the artifact scope. Two agents writing to `("planner", "shared")` and
+`("reviewer", "shared")` address the same artifact.
+
+**Observability** — pass `on_metric` to measure token savings:
+
+```python
+from ccs.adapters import CCSStore, StoreMetricEvent
+
+events = []
+store = CCSStore(strategy="lazy", on_metric=events.append)
+# each StoreMetricEvent carries: operation, cache_hit, tokens_consumed, tick
+```
+
+**Telemetry** — export to OpenTelemetry or LangSmith with one parameter:
+
+```python
+store = CCSStore(strategy="lazy", telemetry="opentelemetry")
+store = CCSStore(strategy="lazy", telemetry="langsmith")
+```
+
+**Graceful degradation** — fall back to a plain dict instead of raising on errors:
+
+```python
+store = CCSStore(strategy="lazy", on_error="degrade")
+```
+
+See [docs/ccsstore.md](docs/ccsstore.md) for the full guide: namespace convention,
+strategies, observability, telemetry, graceful degradation, examples, and API
+reference.
+
+### Low-level adapter API
+
+For CrewAI, AutoGen, or custom integrations, use the `before_node` /
+`commit_outputs` surface directly:
 
 ```python
 from ccs.adapters.langgraph import LangGraphAdapter
 
 adapter = LangGraphAdapter(strategy_name="lazy")
-
-# Register agents and shared artifacts
 for name in ("planner", "researcher", "executor"):
     adapter.register_agent(name)
-
 plan = adapter.register_artifact(name="plan.md", content="v1")
 
-# Before a node runs - fetch only if the local cache is invalid
-context = adapter.before_node(
-    agent_name="planner",
-    artifact_ids=[plan.id],
-    now_tick=1,
-)
-
-# After a node writes - peers are invalidated, not re-broadcast
+context = adapter.before_node(agent_name="planner", artifact_ids=[plan.id], now_tick=1)
 adapter.commit_outputs(
     agent_name="planner",
-    writes={plan.id: context[plan.id]["content"] + "\nStep 1: gather reqs"},
+    writes={plan.id: context[plan.id]["content"] + "\nStep 1"},
     now_tick=2,
 )
 ```
 
-The next time `researcher` or `executor` reads `plan.md`, it fetches
-once and re-caches. Other artifacts they hold stay warm. Adapters for
-CrewAI and AutoGen use the same `before_node` / `commit_outputs`
-surface.
+Full example: [`examples/multi_agent_planning.py`](examples/multi_agent_planning.py).
 
-Full example in
-[`examples/multi_agent_planning.py`](examples/multi_agent_planning.py).
+### Running the examples
+
+```bash
+python -m examples.langgraph_planner.main   # 4-agent, 75% hit rate, 69% savings
+python -m examples.code_review.main          # 3-agent, SHARED state demo
+python -m examples.research_pipeline.main    # 4-agent, 3 artifacts, 60% hit rate
+```
+
+### Reproducing the paper's 95% number
+
+The 95% figure in the benchmarks table comes from the simulation suite, not the
+LangGraph example. To reproduce it:
+
+```bash
+make reproduce
+```
+
+The `examples/langgraph_planner/` demo shows CCSStore saving real tokens on a
+realistic graph — these are two separate claims and two separate entry points. See
+[docs/ccsstore.md#real-workload-benchmarks](docs/ccsstore.md#real-workload-benchmarks)
+for real LangGraph benchmark results (47–69% savings depending on write frequency).
 
 ## Benchmarks
 
@@ -100,8 +152,8 @@ agent writes.
 - **Consistency** is single-writer-multiple-reader per artifact, with
   bounded staleness - peers re-fetch on next read.
 
-Four synchronization strategies ship out of the box: `lazy` (default),
-`eager`, `lease` (TTL-based), and `access_count`.
+Five synchronization strategies ship out of the box: `lazy` (default),
+`eager`, `lease` (TTL-based), `access_count`, and `broadcast`.
 
 ## Architecture
 
@@ -165,12 +217,18 @@ for three frameworks. The library is designed to run standalone - the
 coordinator, adapters, and strategies are all Apache 2.0 and
 production-deployable on your own infrastructure.
 
-Coming in `v0.2`:
+Shipped in `v0.2`:
 
-- Production benchmarks on real LangGraph deployments
-- Telemetry exporters (OpenTelemetry, LangSmith)
+- Production benchmarks on real LangGraph deployments (`benchmarks/langgraph_real/`)
+- Telemetry exporters: OpenTelemetry and LangSmith (`ccs.adapters.telemetry`)
+- Graceful degradation (`on_error="degrade"`)
+- New examples: code review pipeline and research pipeline
+
+Coming next:
+
 - Optimistic-locking strategy for high-contention workloads
 - Async coordinator for large agent fleets
+- Persistent backend (PostgresStore compatibility)
 
 This is an alpha release. APIs may change before `v1.0`.
 
