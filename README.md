@@ -68,6 +68,62 @@ surface.
 Full example in
 [`examples/multi_agent_planning.py`](examples/multi_agent_planning.py).
 
+## CCSStore — LangGraph BaseStore with coherence
+
+Replace `InMemoryStore` in an existing LangGraph graph with one import change:
+
+```bash
+pip install "agent-coherence[langgraph]"
+```
+
+```python
+# Before
+from langgraph.store.memory import InMemoryStore
+store = InMemoryStore()
+
+# After — no other changes to node code required
+from ccs.adapters import CCSStore
+store = CCSStore(strategy="lazy")
+
+graph = builder.compile(store=store)
+```
+
+**Namespace convention:** `namespace[0]` is the agent identity; `namespace[1:]` is
+the artifact scope. Two agents writing to `("planner", "shared")` and
+`("reviewer", "shared")` address the same artifact — shared state is the common
+case. For agent-private artifacts, include the agent name in the scope:
+`("planner", "planner", "private")`.
+
+**Observability** — pass `on_metric` to measure token savings:
+
+```python
+from ccs.adapters import CCSStore, StoreMetricEvent
+
+events = []
+store = CCSStore(strategy="lazy", on_metric=events.append)
+```
+
+Each `StoreMetricEvent` carries `operation`, `cache_hit`, `tokens_consumed`, and
+`tick`. See [`examples/langgraph_planner/`](examples/langgraph_planner/) for a
+4-agent demo showing ~67% token reduction at a 4:1 read/write ratio.
+
+**v0 scope:** in-memory only. Users swapping from `PostgresStore` take a durability
+regression — persistent backends are v0.2 scope.
+
+### Reproducing the paper's 95% number
+
+The 95% figure in the benchmarks table comes from the simulation suite, not the
+LangGraph example. To reproduce it:
+
+```bash
+make reproduce
+```
+
+This runs the simulation suite in `benchmarks/` over the paper's Planning workload
+(large `n`, high read/write ratio, many epochs, simulated over hundreds of ticks).
+The `examples/langgraph_planner/` demo shows CCSStore saving real tokens on a
+realistic graph — these are two separate claims and two separate entry points.
+
 ## Benchmarks
 
 Four canonical multi-agent workloads, `n=4` agents, `m=3` artifacts at
