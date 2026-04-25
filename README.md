@@ -107,6 +107,43 @@ Each `StoreMetricEvent` carries `operation`, `cache_hit`, `tokens_consumed`, and
 `tick`. See [`examples/langgraph_planner/`](examples/langgraph_planner/) for a
 4-agent demo showing ~67% token reduction at a 4:1 read/write ratio.
 
+**Telemetry** — export metrics to OpenTelemetry or LangSmith without changing node
+code:
+
+```bash
+pip install "agent-coherence[otel]"       # OpenTelemetry
+pip install "agent-coherence[langsmith]"  # LangSmith
+```
+
+```python
+# OpenTelemetry — emits ccs.store.operations and ccs.store.tokens_consumed counters
+store = CCSStore(strategy="lazy", telemetry="opentelemetry")
+
+# LangSmith — attaches per-op metadata to the active run tree
+store = CCSStore(strategy="lazy", telemetry="langsmith")
+
+# Custom exporter — implement TelemetryExporter.on_event()
+from ccs.adapters import TelemetryExporter
+class MyExporter(TelemetryExporter):
+    def on_event(self, event):
+        my_sink.record(event)
+
+store = CCSStore(strategy="lazy", telemetry=MyExporter())
+```
+
+**Graceful degradation** — keep the graph running when a coherence error occurs:
+
+```python
+# "strict" (default): CoherenceError propagates, graph fails fast
+store = CCSStore(strategy="lazy", on_error="strict")
+
+# "degrade": logs a warning, emits a "degraded" event, falls back to plain dict
+store = CCSStore(strategy="lazy", on_error="degrade")
+```
+
+In `degrade` mode the store emits `StoreMetricEvent(operation="degraded", ...)` so
+your `on_metric` callback can detect and alert on degradations.
+
 **v0 scope:** in-memory only. Users swapping from `PostgresStore` take a durability
 regression — persistent backends are v0.2 scope.
 
@@ -221,12 +258,18 @@ for three frameworks. The library is designed to run standalone - the
 coordinator, adapters, and strategies are all Apache 2.0 and
 production-deployable on your own infrastructure.
 
-Coming in `v0.2`:
+Shipped in `v0.2`:
 
-- Production benchmarks on real LangGraph deployments
-- Telemetry exporters (OpenTelemetry, LangSmith)
+- Production benchmarks on real LangGraph deployments (`benchmarks/langgraph_real/`)
+- Telemetry exporters: OpenTelemetry and LangSmith (`ccs.adapters.telemetry`)
+- Graceful degradation (`on_error="degrade"`)
+- New examples: code review pipeline and research pipeline
+
+Coming next:
+
 - Optimistic-locking strategy for high-contention workloads
 - Async coordinator for large agent fleets
+- Persistent backend (PostgresStore compatibility)
 
 This is an alpha release. APIs may change before `v1.0`.
 
