@@ -12,6 +12,8 @@ from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
+pytest.importorskip("langgraph.store.base")
+
 from ccs.adapters.ccsstore import CCSStore, StoreMetricEvent
 from ccs.core.states import MESIState
 from langgraph.store.base import GetOp, ListNamespacesOp, MatchCondition, PutOp, SearchOp
