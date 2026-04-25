@@ -26,51 +26,7 @@ This is the same problem multi-core CPUs solved in the 1980s with MESI
 cache coherence. `agent-coherence` applies that protocol to shared
 artifacts in multi-agent pipelines.
 
-## Install
-
-```bash
-pip install agent-coherence
-```
-
-## Quick start - LangGraph
-
-```python
-from ccs.adapters.langgraph import LangGraphAdapter
-
-adapter = LangGraphAdapter(strategy_name="lazy")
-
-# Register agents and shared artifacts
-for name in ("planner", "researcher", "executor"):
-    adapter.register_agent(name)
-
-plan = adapter.register_artifact(name="plan.md", content="v1")
-
-# Before a node runs - fetch only if the local cache is invalid
-context = adapter.before_node(
-    agent_name="planner",
-    artifact_ids=[plan.id],
-    now_tick=1,
-)
-
-# After a node writes - peers are invalidated, not re-broadcast
-adapter.commit_outputs(
-    agent_name="planner",
-    writes={plan.id: context[plan.id]["content"] + "\nStep 1: gather reqs"},
-    now_tick=2,
-)
-```
-
-The next time `researcher` or `executor` reads `plan.md`, it fetches
-once and re-caches. Other artifacts they hold stay warm. Adapters for
-CrewAI and AutoGen use the same `before_node` / `commit_outputs`
-surface.
-
-Full example in
-[`examples/multi_agent_planning.py`](examples/multi_agent_planning.py).
-
-## CCSStore — LangGraph BaseStore with coherence
-
-Replace `InMemoryStore` in an existing LangGraph graph with one import change:
+## Quick start
 
 ```bash
 pip install "agent-coherence[langgraph]"
@@ -81,7 +37,7 @@ pip install "agent-coherence[langgraph]"
 from langgraph.store.memory import InMemoryStore
 store = InMemoryStore()
 
-# After — no other changes to node code required
+# After — one import change, no node code changes required
 from ccs.adapters import CCSStore
 store = CCSStore(strategy="lazy")
 
@@ -90,9 +46,7 @@ graph = builder.compile(store=store)
 
 **Namespace convention:** `namespace[0]` is the agent identity; `namespace[1:]` is
 the artifact scope. Two agents writing to `("planner", "shared")` and
-`("reviewer", "shared")` address the same artifact — shared state is the common
-case. For agent-private artifacts, include the agent name in the scope:
-`("planner", "planner", "private")`.
+`("reviewer", "shared")` address the same artifact.
 
 **Observability** — pass `on_metric` to measure token savings:
 
@@ -101,51 +55,56 @@ from ccs.adapters import CCSStore, StoreMetricEvent
 
 events = []
 store = CCSStore(strategy="lazy", on_metric=events.append)
+# each StoreMetricEvent carries: operation, cache_hit, tokens_consumed, tick
 ```
 
-Each `StoreMetricEvent` carries `operation`, `cache_hit`, `tokens_consumed`, and
-`tick`. See [`examples/langgraph_planner/`](examples/langgraph_planner/) for a
-4-agent demo showing ~67% token reduction at a 4:1 read/write ratio.
-
-**Telemetry** — export metrics to OpenTelemetry or LangSmith without changing node
-code:
-
-```bash
-pip install "agent-coherence[otel]"       # OpenTelemetry
-pip install "agent-coherence[langsmith]"  # LangSmith
-```
+**Telemetry** — export to OpenTelemetry or LangSmith with one parameter:
 
 ```python
-# OpenTelemetry — emits ccs.store.operations and ccs.store.tokens_consumed counters
 store = CCSStore(strategy="lazy", telemetry="opentelemetry")
-
-# LangSmith — attaches per-op metadata to the active run tree
 store = CCSStore(strategy="lazy", telemetry="langsmith")
-
-# Custom exporter — implement TelemetryExporter.on_event()
-from ccs.adapters import TelemetryExporter
-class MyExporter(TelemetryExporter):
-    def on_event(self, event):
-        my_sink.record(event)
-
-store = CCSStore(strategy="lazy", telemetry=MyExporter())
 ```
 
-**Graceful degradation** — keep the graph running when a coherence error occurs:
+**Graceful degradation** — fall back to a plain dict instead of raising on errors:
 
 ```python
-# "strict" (default): CoherenceError propagates, graph fails fast
-store = CCSStore(strategy="lazy", on_error="strict")
-
-# "degrade": logs a warning, emits a "degraded" event, falls back to plain dict
 store = CCSStore(strategy="lazy", on_error="degrade")
 ```
 
-In `degrade` mode the store emits `StoreMetricEvent(operation="degraded", ...)` so
-your `on_metric` callback can detect and alert on degradations.
+See [docs/ccsstore.md](docs/ccsstore.md) for the full guide: namespace convention,
+strategies, observability, telemetry, graceful degradation, examples, and API
+reference.
 
-**v0 scope:** in-memory only. Users swapping from `PostgresStore` take a durability
-regression — persistent backends are v0.2 scope.
+### Low-level adapter API
+
+For CrewAI, AutoGen, or custom integrations, use the `before_node` /
+`commit_outputs` surface directly:
+
+```python
+from ccs.adapters.langgraph import LangGraphAdapter
+
+adapter = LangGraphAdapter(strategy_name="lazy")
+for name in ("planner", "researcher", "executor"):
+    adapter.register_agent(name)
+plan = adapter.register_artifact(name="plan.md", content="v1")
+
+context = adapter.before_node(agent_name="planner", artifact_ids=[plan.id], now_tick=1)
+adapter.commit_outputs(
+    agent_name="planner",
+    writes={plan.id: context[plan.id]["content"] + "\nStep 1"},
+    now_tick=2,
+)
+```
+
+Full example: [`examples/multi_agent_planning.py`](examples/multi_agent_planning.py).
+
+### Running the examples
+
+```bash
+python -m examples.langgraph_planner.main   # 4-agent, 75% hit rate, 69% savings
+python -m examples.code_review.main          # 3-agent, SHARED state demo
+python -m examples.research_pipeline.main    # 4-agent, 3 artifacts, 60% hit rate
+```
 
 ### Reproducing the paper's 95% number
 
@@ -156,10 +115,10 @@ LangGraph example. To reproduce it:
 make reproduce
 ```
 
-This runs the simulation suite in `benchmarks/` over the paper's Planning workload
-(large `n`, high read/write ratio, many epochs, simulated over hundreds of ticks).
 The `examples/langgraph_planner/` demo shows CCSStore saving real tokens on a
-realistic graph — these are two separate claims and two separate entry points.
+realistic graph — these are two separate claims and two separate entry points. See
+[docs/ccsstore.md#real-workload-benchmarks](docs/ccsstore.md#real-workload-benchmarks)
+for real LangGraph benchmark results (47–69% savings depending on write frequency).
 
 ## Benchmarks
 
@@ -193,8 +152,8 @@ agent writes.
 - **Consistency** is single-writer-multiple-reader per artifact, with
   bounded staleness - peers re-fetch on next read.
 
-Four synchronization strategies ship out of the box: `lazy` (default),
-`eager`, `lease` (TTL-based), and `access_count`.
+Five synchronization strategies ship out of the box: `lazy` (default),
+`eager`, `lease` (TTL-based), `access_count`, and `broadcast`.
 
 ## Architecture
 
