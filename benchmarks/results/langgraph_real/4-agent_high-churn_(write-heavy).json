@@ -1,0 +1,14 @@
+{
+  "label": "4-agent high-churn (write-heavy)",
+  "baseline_tokens": 3250,
+  "ccs_tokens": 2317,
+  "cache_hit_rate": 0.5,
+  "token_reduction_pct": 28.71,
+  "num_ops": 13,
+  "num_writes": 5,
+  "num_reads": 8,
+  "num_hits": 4,
+  "num_misses": 4,
+  "content_tokens": 250,
+  "elapsed_s": 0.0199
+}
