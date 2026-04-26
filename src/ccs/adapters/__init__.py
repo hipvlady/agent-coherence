@@ -15,6 +15,7 @@ from typing import Any
 
 __all__ = [
     "CCSStore",
+    "CoherenceDegradedWarning",
     "CoherenceAdapterCore",
     "LangGraphAdapter",
     "CrewAIAdapter",
@@ -30,6 +31,7 @@ __all__ = [
 _EXPORTS: dict[str, tuple[str, str]] = {
     "AutoGenAdapter": (".autogen", "AutoGenAdapter"),
     "CCSStore": (".ccsstore", "CCSStore"),
+    "CoherenceDegradedWarning": (".ccsstore", "CoherenceDegradedWarning"),
     "CoherenceAdapterCore": (".base", "CoherenceAdapterCore"),
     "CrewAIAdapter": (".crewai", "CrewAIAdapter"),
     "LangGraphAdapter": (".langgraph", "LangGraphAdapter"),

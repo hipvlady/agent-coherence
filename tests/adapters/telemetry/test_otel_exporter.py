@@ -137,3 +137,124 @@ def test_ccsstore_otel_records_put_and_get() -> None:
     operations = {p.attributes["ccs.operation"] for p in ops}
     assert "put" in operations
     assert "get" in operations
+
+
+# ---------------------------------------------------------------------------
+# tokens_saved_estimate propagation (R1 + Unit 3)
+# ---------------------------------------------------------------------------
+
+def test_store_metric_event_default_tokens_saved_is_zero() -> None:
+    event = StoreMetricEvent(
+        operation="get",
+        namespace=("agent", "shared"),
+        key="plan",
+        agent_name="planner",
+        tokens_consumed=50,
+        cache_hit=False,
+        tick=1,
+    )
+    assert event.tokens_saved_estimate == 0
+
+
+def test_store_metric_event_tokens_saved_roundtrips() -> None:
+    event = StoreMetricEvent(
+        operation="get",
+        namespace=("agent", "shared"),
+        key="plan",
+        agent_name="planner",
+        tokens_consumed=1,
+        cache_hit=True,
+        tick=1,
+        tokens_saved_estimate=99,
+    )
+    assert event.tokens_saved_estimate == 99
+
+
+def test_otel_tokens_saved_counter_on_cache_hit() -> None:
+    provider, reader = _provider_and_reader()
+    exporter = OtelExporter(meter_provider=provider)
+    store = CCSStore(strategy="lazy", telemetry=exporter)
+
+    large_value = {"content": "x" * 200}
+    store.batch([PutOp(namespace=("planner", "shared"), key="plan", value=large_value)])
+    store.batch([GetOp(namespace=("planner", "shared"), key="plan")])  # cache hit
+
+    metrics = _collect_metrics(reader)
+    saved_points = metrics.get("ccs.store.tokens_saved_estimate", [])
+    total_saved = sum(p.value for p in saved_points)
+    assert total_saved > 0
+
+
+def test_otel_tokens_saved_counter_zero_on_cache_miss() -> None:
+    provider, reader = _provider_and_reader()
+    exporter = OtelExporter(meter_provider=provider)
+    store = CCSStore(strategy="lazy", telemetry=exporter)
+
+    store.batch([PutOp(namespace=("planner", "shared"), key="plan", value={"v": 1})])
+    store.batch([GetOp(namespace=("reviewer", "shared"), key="plan")])  # cache miss
+
+    metrics = _collect_metrics(reader)
+    saved_points = metrics.get("ccs.store.tokens_saved_estimate", [])
+    total_saved = sum(p.value for p in saved_points)
+    assert total_saved == 0
+
+
+def test_otel_cache_hit_miss_counters_on_get() -> None:
+    provider, reader = _provider_and_reader()
+    exporter = OtelExporter(meter_provider=provider)
+    store = CCSStore(strategy="lazy", telemetry=exporter)
+
+    store.batch([PutOp(namespace=("planner", "shared"), key="plan", value={"v": 1})])
+    store.batch([GetOp(namespace=("planner", "shared"), key="plan")])   # hit
+    store.batch([GetOp(namespace=("reviewer", "shared"), key="plan")])  # miss
+
+    metrics = _collect_metrics(reader)
+    hits = sum(p.value for p in metrics.get("ccs.store.cache_hits", []))
+    misses = sum(p.value for p in metrics.get("ccs.store.cache_misses", []))
+    assert hits == 1
+    assert misses == 1
+
+
+def test_otel_put_does_not_increment_hit_or_miss_counters() -> None:
+    provider, reader = _provider_and_reader()
+    exporter = OtelExporter(meter_provider=provider)
+    # Only put events — no gets
+    exporter.on_event(_fake_event(operation="put", cache_hit=False, tokens=50))
+    exporter.on_event(_fake_event(operation="put", cache_hit=False, tokens=50))
+
+    metrics = _collect_metrics(reader)
+    hits = sum(p.value for p in metrics.get("ccs.store.cache_hits", []))
+    misses = sum(p.value for p in metrics.get("ccs.store.cache_misses", []))
+    assert hits == 0
+    assert misses == 0
+
+
+def test_otel_degraded_mode_gauge_zero_initially() -> None:
+    provider, reader = _provider_and_reader()
+    exporter = OtelExporter(meter_provider=provider)
+    exporter.on_event(_fake_event(operation="get", cache_hit=False))
+
+    metrics = _collect_metrics(reader)
+    gauge_points = metrics.get("ccs.store.degraded_mode", [])
+    assert all(p.value == 0 for p in gauge_points)
+
+
+def test_otel_degraded_mode_gauge_one_after_degraded_event() -> None:
+    provider, reader = _provider_and_reader()
+    exporter = OtelExporter(meter_provider=provider)
+    exporter.on_event(_fake_event(operation="degraded", cache_hit=False))
+
+    metrics = _collect_metrics(reader)
+    gauge_points = metrics.get("ccs.store.degraded_mode", [])
+    assert any(p.value == 1 for p in gauge_points)
+
+
+def test_otel_degradation_events_counter_increments() -> None:
+    provider, reader = _provider_and_reader()
+    exporter = OtelExporter(meter_provider=provider)
+    exporter.on_event(_fake_event(operation="degraded", cache_hit=False))
+    exporter.on_event(_fake_event(operation="degraded", cache_hit=False))
+
+    metrics = _collect_metrics(reader)
+    degrade_points = metrics.get("ccs.store.degradation_events", [])
+    assert sum(p.value for p in degrade_points) == 2

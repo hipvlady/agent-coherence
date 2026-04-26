@@ -16,16 +16,16 @@ Token accounting:
 Run:
   python -m examples.langgraph_planner.main
 """
+# ruff: noqa: F401
 
 from __future__ import annotations
 
-import json
 from typing import TypedDict
 
 from langgraph.config import get_store as lg_get_store
 from langgraph.graph import END, START, StateGraph
 
-from ccs.adapters.ccsstore import CCSStore, StoreMetricEvent
+from ccs.adapters.ccsstore import CCSStore
 
 # ---------------------------------------------------------------------------
 # Shared artifact content  (~100 tokens to make the numbers meaningful)
@@ -112,60 +112,18 @@ def build_graph(store: CCSStore) -> "CompiledStateGraph":
 # ---------------------------------------------------------------------------
 
 def run() -> None:
-    events: list[StoreMetricEvent] = []
-    store = CCSStore(strategy="lazy", on_metric=events.append)
+    store = CCSStore(strategy="lazy", benchmark=True)
     graph = build_graph(store)
 
     final_state = graph.invoke({"log": []})
 
-    # Separate event types
-    put_events = [e for e in events if e.operation == "put"]
-    get_events = [e for e in events if e.operation == "get"]
-    hits = [e for e in get_events if e.cache_hit]
-    misses = [e for e in get_events if not e.cache_hit]
-
-    num_writes = len(put_events)
-    num_reads = len(get_events)
-    num_hits = len(hits)
-    num_misses = len(misses)
-
-    content_tokens = max(
-        1, len(json.dumps(PLAN_CONTENT, sort_keys=True, separators=(",", ":"))) // 4
-    )
-
-    # Baseline: every op pays full content cost (InMemoryStore semantics)
-    baseline_tokens = (num_writes + num_reads) * content_tokens
-
-    # CCSStore: sum of all on_metric events
-    # Cache hits emit 1 token (no coordinator fetch); misses emit full content size
-    ccs_tokens = sum(e.tokens_consumed for e in events if e.operation in ("put", "get"))
-
-    cache_hit_rate = num_hits / num_reads if num_reads > 0 else 0.0
-    reduction_pct = (baseline_tokens - ccs_tokens) / baseline_tokens * 100 if baseline_tokens > 0 else 0.0
-
-    # Print results
     print()
-    print(f"Workload: {num_writes} write + {num_reads} reads "
-          f"({NUM_READS_PER_AGENT} per agent × {len(DOWNSTREAM_AGENTS)} agents), "
-          f"content ≈ {content_tokens} tokens")
+    print("Example: 4-agent planning pipeline")
     print()
-    print(f"  Baseline (no-cache):  {baseline_tokens:>6} tokens"
-          f"   ({num_writes + num_reads} ops × {content_tokens} — every op pays full content)")
-    print(f"  CCSStore lazy:        {ccs_tokens:>6} tokens"
-          f"   ({num_writes} write + {num_misses} misses) × {content_tokens}"
-          f" + {num_hits} hits × 1")
-    print()
-    print(f"  Cache hit rate:   {num_hits} / {num_reads} = {cache_hit_rate:.0%}"
-          f"    ← fraction of reads served from cache")
-    print(f"  Token reduction:  {reduction_pct:.0f}%"
-          f"            ← actual savings vs no-cache baseline")
-    print()
-    print("  Note: hit rate and reduction % are different metrics.")
-    print("  To reproduce the paper's 95% number, run: make reproduce")
-    print()
-    print("Graph execution log:")
     for entry in final_state["log"]:
         print(f"  {entry}")
+    print()
+    store.print_benchmark_summary()
 
 
 if __name__ == "__main__":

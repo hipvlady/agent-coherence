@@ -25,6 +25,7 @@ class StoreMetricEvent:
     tokens_consumed: int
     cache_hit: bool
     tick: int
+    tokens_saved_estimate: int = 0
 
 
 class TelemetryExporter(ABC):

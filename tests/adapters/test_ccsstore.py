@@ -11,6 +11,7 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 import pytest
+from unittest.mock import patch
 
 pytest.importorskip("langgraph.store.base")
 
@@ -706,3 +707,88 @@ def test_on_error_degrade_does_not_raise_on_coherence_error() -> None:
         _put(store, ("planner", "shared"), "plan", {"v": 2})  # no raise
     with patch.object(store.core, "read", side_effect=CoherenceError("simulated")):
         _get(store, ("reviewer", "shared"), "plan")  # no raise
+
+
+# ---------------------------------------------------------------------------
+# CoherenceDegradedWarning + degradation visibility (R8 additions)
+# ---------------------------------------------------------------------------
+
+def test_is_degraded_false_before_any_error() -> None:
+    store = _store(on_error="degrade")
+    assert store.is_degraded is False
+
+
+def test_is_degraded_true_after_degraded_get() -> None:
+    from ccs.core.exceptions import CoherenceError
+    import warnings
+
+    store = _store(on_error="degrade")
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with patch.object(store.core, "read", side_effect=CoherenceError("simulated")):
+            _get(store, ("reviewer", "shared"), "plan")
+    assert store.is_degraded is True
+
+
+def test_is_degraded_true_after_degraded_put() -> None:
+    from ccs.core.exceptions import CoherenceError
+    import warnings
+
+    store = _store(on_error="degrade")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with patch.object(store.core, "write", side_effect=CoherenceError("simulated")):
+            _put(store, ("planner", "shared"), "plan", {"v": 1})
+    assert store.is_degraded is True
+
+
+def test_degradation_count_increments_per_error() -> None:
+    from ccs.core.exceptions import CoherenceError
+    import warnings
+
+    store = _store(on_error="degrade")
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with patch.object(store.core, "read", side_effect=CoherenceError("simulated")):
+            _get(store, ("reviewer", "shared"), "plan")
+            _get(store, ("reviewer", "shared"), "plan")
+    assert store.degradation_count == 2
+
+
+def test_degraded_warning_emitted_on_first_degradation() -> None:
+    from ccs.core.exceptions import CoherenceError
+    from ccs.adapters.ccsstore import CoherenceDegradedWarning
+
+    store = _store(on_error="degrade")
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    with pytest.warns(CoherenceDegradedWarning):
+        with patch.object(store.core, "read", side_effect=CoherenceError("simulated")):
+            _get(store, ("reviewer", "shared"), "plan")
+
+
+def test_degraded_warning_not_emitted_on_second_degradation() -> None:
+    from ccs.core.exceptions import CoherenceError
+    from ccs.adapters.ccsstore import CoherenceDegradedWarning
+    import warnings
+
+    store = _store(on_error="degrade")
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    # First degradation fires the warning
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with patch.object(store.core, "read", side_effect=CoherenceError("simulated")):
+            _get(store, ("reviewer", "shared"), "plan")
+    # Second degradation must NOT fire CoherenceDegradedWarning
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        with patch.object(store.core, "read", side_effect=CoherenceError("simulated")):
+            _get(store, ("reviewer", "shared"), "plan")
+    degraded_warnings = [x for x in w if issubclass(x.category, CoherenceDegradedWarning)]
+    assert len(degraded_warnings) == 0
+
+
+def test_coherence_degraded_warning_importable_from_adapters() -> None:
+    from ccs.adapters import CoherenceDegradedWarning  # noqa: F401
+    assert issubclass(CoherenceDegradedWarning, UserWarning)
