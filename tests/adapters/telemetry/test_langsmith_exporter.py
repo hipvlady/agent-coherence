@@ -99,3 +99,96 @@ def test_ccsstore_langsmith_receives_metadata_after_put() -> None:
     mock_run.add_metadata.assert_called_once()
     metadata = mock_run.add_metadata.call_args[0][0]
     assert metadata["ccs.operation"] == "put"
+
+
+# ---------------------------------------------------------------------------
+# Stateful aggregation — headline keys (Unit 4)
+# ---------------------------------------------------------------------------
+
+def test_langsmith_headline_keys_on_cache_hit() -> None:
+    exporter = LangSmithExporter()
+    mock_run = MagicMock()
+    event = StoreMetricEvent(
+        operation="get",
+        namespace=("agent", "shared"),
+        key="plan",
+        agent_name="planner",
+        tokens_consumed=1,
+        cache_hit=True,
+        tick=1,
+        tokens_saved_estimate=99,
+    )
+    with patch("langsmith.run_helpers.get_current_run_tree", return_value=mock_run):
+        exporter.on_event(event)
+
+    metadata = mock_run.add_metadata.call_args[0][0]
+    assert metadata["ccs.cache_hit_rate"] == 1.0
+    assert metadata["ccs.token_reduction_pct"] > 0
+    assert metadata["ccs.tokens_saved_estimate"] > 0
+
+
+def test_langsmith_headline_keys_on_cache_miss() -> None:
+    exporter = LangSmithExporter()
+    mock_run = MagicMock()
+    event = StoreMetricEvent(
+        operation="get",
+        namespace=("agent", "shared"),
+        key="plan",
+        agent_name="planner",
+        tokens_consumed=50,
+        cache_hit=False,
+        tick=1,
+    )
+    with patch("langsmith.run_helpers.get_current_run_tree", return_value=mock_run):
+        exporter.on_event(event)
+
+    metadata = mock_run.add_metadata.call_args[0][0]
+    assert metadata["ccs.cache_hit_rate"] == 0.0
+    assert metadata["ccs.tokens_saved_estimate"] == 0
+
+
+def test_langsmith_cache_hit_rate_mixed() -> None:
+    exporter = LangSmithExporter()
+    mock_run = MagicMock()
+    hit_event = StoreMetricEvent(
+        operation="get", namespace=("a", "s"), key="k", agent_name="a",
+        tokens_consumed=1, cache_hit=True, tick=1, tokens_saved_estimate=50,
+    )
+    miss_event = StoreMetricEvent(
+        operation="get", namespace=("a", "s"), key="k", agent_name="b",
+        tokens_consumed=50, cache_hit=False, tick=2,
+    )
+    with patch("langsmith.run_helpers.get_current_run_tree", return_value=mock_run):
+        exporter.on_event(hit_event)
+        exporter.on_event(miss_event)
+
+    metadata = mock_run.add_metadata.call_args[0][0]
+    assert metadata["ccs.cache_hit_rate"] == 0.5
+
+
+def test_langsmith_zero_baseline_no_division_error() -> None:
+    exporter = LangSmithExporter()
+    mock_run = MagicMock()
+    # Artificial edge: tokens_consumed=0 and tokens_saved_estimate=0 keeps baseline at 0.
+    event = StoreMetricEvent(
+        operation="get", namespace=("a", "s"), key="k", agent_name="a",
+        tokens_consumed=0, cache_hit=False, tick=1,
+    )
+    with patch("langsmith.run_helpers.get_current_run_tree", return_value=mock_run):
+        exporter.on_event(event)
+
+    metadata = mock_run.add_metadata.call_args[0][0]
+    assert metadata["ccs.token_reduction_pct"] == 0.0
+
+
+def test_langsmith_accumulators_update_when_run_is_none() -> None:
+    exporter = LangSmithExporter()
+    event = StoreMetricEvent(
+        operation="get", namespace=("a", "s"), key="k", agent_name="a",
+        tokens_consumed=50, cache_hit=True, tick=1, tokens_saved_estimate=49,
+    )
+    with patch("langsmith.run_helpers.get_current_run_tree", return_value=None):
+        exporter.on_event(event)  # must not raise
+
+    assert exporter._hits == 1
+    assert exporter._tokens_saved == 49

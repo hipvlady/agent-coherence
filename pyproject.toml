@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-coherence"
-version = "0.1.0"
-description = "MESI-based shared-state coherence with 47–69% token savings on realistic multi-agent workloads"
+version = "0.2.0"
+description = "Token optimization layer for multi-agent LangGraph systems — 37–69% token savings via MESI cache coherence"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Arbiter contributors" }]
