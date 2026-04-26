@@ -1,7 +1,7 @@
 # agent-coherence
 
 CCSStore is a drop-in token optimization layer for multi-agent LangGraph systems.
-It cuts shared-artifact token costs by **37–69%** on realistic workloads — via MESI
+It cuts shared-artifact token costs by **47–74%** on realistic workloads — via MESI
 cache coherence, one import change.
 
 [![CI](https://github.com/hipvlady/agent-coherence/actions/workflows/ci.yml/badge.svg)](https://github.com/hipvlady/agent-coherence/actions/workflows/ci.yml)
@@ -23,29 +23,32 @@ store = CCSStore(strategy="lazy")
 ```
 
 ```
-$ python -m examples.shared_codebase.main
+$ python -m examples.langgraph_planner.main
 
-  style_reviewer: 8 files scanned, 4 re-read, findings written
-  security_reviewer: 8 files scanned, 4 re-read, findings written
-  architecture_reviewer: 8 files scanned, 4 re-read, findings written
-  synthesizer: 3 findings read, context re-read (12 issues total)
+Example: 4-agent planning pipeline
+
+  planner: wrote plan
+  researcher: read plan 4×
+  executor: read plan 4×
+  reviewer: read plan 4×
 
   CCSStore Benchmark Summary
   ──────────────────────────────────────
-  Baseline tokens (no cache):     44702
-  CCSStore tokens:                27882
-  Tokens saved:                   16820
-  Token reduction:                37.6%
-  Cache hit rate:                35.3%  (51 get ops)
+  Baseline tokens (no cache):      1476
+  CCSStore tokens:                  378
+  Tokens saved:                    1098
+  Token reduction:                74.4%
+  Cache hit rate:                75.0%  (12 get ops)
 ```
 
-Saving 16,820 tokens at $3/MTok = **$0.050 per run**. At 1,000 runs/day: **$50/day**.
+Saving 1,098 tokens at $3/MTok = **$0.003 per run**. At 1,000 runs/day: **$3/day** on a ~120-token plan artifact.
 
-> **Baseline explained:** tokens you would pay if every agent re-read every shared
-> artifact from scratch — equivalent to a graph without cross-agent caching. This is
-> what `InMemoryStore` effectively does. Hit rates vary by workload; see
-> [Real-workload benchmarks](#real-workload-benchmarks) for planner, code-review,
-> and high-churn scenarios.
+> **Baseline:** tokens you would pay if every agent re-read every shared artifact from scratch —
+> equivalent to a graph without cross-agent caching. This is what `InMemoryStore` effectively does.
+
+> **Savings scale with artifact size.** On a codebase-review workload with 2 KB source files
+> and 3 reviewers: 16,820 tokens saved, **$50/day at 1,000 runs**.
+> See [`examples/shared_codebase/`](examples/shared_codebase/).
 
 - 📄 [Paper on arXiv (2603.15183)](https://arxiv.org/abs/2603.15183) — formal protocol, TLA+ verification, simulation results
 - 📊 [Real benchmarks](#real-workload-benchmarks) — measured on actual LangGraph graphs
@@ -142,8 +145,8 @@ Full example: [`examples/multi_agent_planning.py`](examples/multi_agent_planning
 ### Running the examples
 
 ```bash
-python -m examples.shared_codebase.main    # 4-agent code review, 37% savings, benchmark output
-python -m examples.langgraph_planner.main  # 4-agent, 75% hit rate, 69% savings
+python -m examples.langgraph_planner.main  # 4-agent planning, 74% savings, benchmark output
+python -m examples.shared_codebase.main    # 4-agent code review, 16,820 tokens saved, $50/day
 python -m examples.code_review.main        # 3-agent, SHARED state demo
 python -m examples.research_pipeline.main  # 4-agent, 3 artifacts, 60% hit rate
 ```
@@ -265,11 +268,11 @@ lean.
 
 ## FAQ
 
-### The paper says 84–95%. Why does the README say 37–69%?
+### The paper says 84–95%. Why does the README say 47–74%?
 
 Two different measurements, both honest. The paper measures protocol-only overhead in
-simulation under controlled assumptions. The 37–69% is what you measure running CCSStore on
-a real LangGraph graph. Use 37–69% for ROI expectations. The 84–95% describes the
+simulation under controlled assumptions. The 47–74% is what you measure running CCSStore on
+a real LangGraph graph. Use 47–74% for ROI expectations. The 84–95% describes the
 protocol's theoretical ceiling under ideal conditions.
 
 ### Why does the high-churn workload only save 29%?
