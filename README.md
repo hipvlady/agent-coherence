@@ -1,8 +1,8 @@
 # agent-coherence
 
 CCSStore is a drop-in token optimization layer for multi-agent LangGraph systems.
-It cuts shared-artifact token costs by **47–74%** on realistic workloads — via MESI
-cache coherence, one import change.
+It cuts shared-artifact token costs on realistic workloads — via MESI cache coherence,
+one import change.
 
 [![CI](https://github.com/hipvlady/agent-coherence/actions/workflows/ci.yml/badge.svg)](https://github.com/hipvlady/agent-coherence/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/agent-coherence)](https://pypi.org/project/agent-coherence/)
@@ -23,32 +23,34 @@ store = CCSStore(strategy="lazy")
 ```
 
 ```
-$ python -m examples.langgraph_planner.main
+$ python -m examples.shared_codebase.main
 
-Example: 4-agent planning pipeline
+Example: 4-agent shared-codebase code review
 
-  planner: wrote plan
-  researcher: read plan 4×
-  executor: read plan 4×
-  reviewer: read plan 4×
+  style_reviewer: 8 files scanned, 4 re-read, findings written
+  security_reviewer: 8 files scanned, 4 re-read, findings written
+  architecture_reviewer: 8 files scanned, 4 re-read, findings written
+  synthesizer: 3 findings read, context re-read (12 issues total)
 
   CCSStore Benchmark Summary
   ──────────────────────────────────────
-  Baseline tokens (no cache):      1476
-  CCSStore tokens:                  378
-  Tokens saved:                    1098
-  Token reduction:                74.4%
-  Cache hit rate:                75.0%  (12 get ops)
+  Baseline tokens (no cache):     44702
+  CCSStore tokens:                27882
+  Tokens saved:                   16820
+  Token reduction:                37.6%
+  Cache hit rate:                35.3%  (51 get ops)
 ```
 
-Saving 1,098 tokens at $3/MTok = **$0.003 per run**. At 1,000 runs/day: **$3/day** on a ~120-token plan artifact.
+Saving 16,820 tokens at $3/MTok = **$0.050 per run**. At 1,000 runs/day: **$18K/year** on one
+codebase-review workload.
 
 > **Baseline:** tokens you would pay if every agent re-read every shared artifact from scratch —
 > equivalent to a graph without cross-agent caching. This is what `InMemoryStore` effectively does.
 
-> **Savings scale with artifact size.** On a codebase-review workload with 2 KB source files
-> and 3 reviewers: 16,820 tokens saved, **$50/day at 1,000 runs**.
-> See [`examples/shared_codebase/`](examples/shared_codebase/).
+> **ROI floor:** At 150 runs/day of a codebase-review-class workload, savings exceed **$3K/year** —
+> a defensible 30× return on a one-line integration. At 3,000 runs/day the math reaches enterprise
+> scale. For teams running small-artifact pipelines at under 500 runs/day, savings will be
+> proportionally smaller.
 
 - 📄 [Paper on arXiv (2603.15183)](https://arxiv.org/abs/2603.15183) — formal protocol, TLA+ verification, simulation results
 - 📊 [Real benchmarks](#real-workload-benchmarks) — measured on actual LangGraph graphs
@@ -145,8 +147,8 @@ Full example: [`examples/multi_agent_planning.py`](examples/multi_agent_planning
 ### Running the examples
 
 ```bash
-python -m examples.langgraph_planner.main  # 4-agent planning, 74% savings, benchmark output
-python -m examples.shared_codebase.main    # 4-agent code review, 16,820 tokens saved, $50/day
+python -m examples.shared_codebase.main    # 4-agent code review, 16,820 tokens saved, $18K/year
+python -m examples.langgraph_planner.main  # 4-agent planning, 74.4% savings — smaller artifact illustration
 python -m examples.code_review.main        # 3-agent, SHARED state demo
 python -m examples.research_pipeline.main  # 4-agent, 3 artifacts, 60% hit rate
 ```
@@ -268,12 +270,14 @@ lean.
 
 ## FAQ
 
-### The paper says 84–95%. Why does the README say 47–74%?
+### The paper says 84–95%. Why does the benchmark table show 29–69%?
 
 Two different measurements, both honest. The paper measures protocol-only overhead in
-simulation under controlled assumptions. The 47–74% is what you measure running CCSStore on
-a real LangGraph graph. Use 47–74% for ROI expectations. The 84–95% describes the
-protocol's theoretical ceiling under ideal conditions.
+simulation under controlled assumptions. The 29–69% range is what you measure running
+CCSStore on a real LangGraph graph. The dollar story in the headline uses absolute token
+savings — percentage depends on read/write ratio, absolute savings depend on artifact size.
+Use the benchmark table for ROI expectations on your workload type. The 84–95% describes
+the protocol's theoretical ceiling under ideal conditions.
 
 ### Why does the high-churn workload only save 29%?
 
@@ -286,11 +290,13 @@ Almost certainly not. The simulation isolates the protocol from real-world facto
 LangGraph's framework overhead, prompt construction, and extra artifact reads. If your
 workload has a read/write ratio above `3:1`, expect 50–70% in production.
 
-### Can I get higher savings than 69%?
+### Can I get higher percentage savings than the benchmark table shows?
 
-Yes, but it requires architectural changes beyond CCSStore — for example, partial-read APIs
-so agents fetch only the artifact fragments they need. CCSStore `v0.2` operates at the
-whole-artifact level.
+Yes. The benchmark table measures realistic agent patterns. Under more read-heavy conditions
+(larger artifacts, more agents, fewer writes) percentage savings increase. For higher
+absolute savings, use larger shared artifacts — savings scale linearly with artifact size.
+CCSStore `v0.2` operates at the whole-artifact level; partial-read APIs would unlock
+additional savings.
 
 ## Status
 
