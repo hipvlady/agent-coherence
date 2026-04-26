@@ -35,7 +35,11 @@ from ccs.core.types import Artifact
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["CCSStore", "StoreMetricEvent"]
+__all__ = ["CCSStore", "CoherenceDegradedWarning", "StoreMetricEvent"]
+
+
+class CoherenceDegradedWarning(UserWarning):
+    """Emitted once per CCSStore instance when the first coherence error degrades to fallback."""
 
 
 class CCSStore(BaseStore):
@@ -57,10 +61,13 @@ class CCSStore(BaseStore):
         on_metric: Callable[[StoreMetricEvent], None] | None = None,
         telemetry: str | TelemetryExporter | None = None,
         on_error: str = "strict",
+        benchmark: bool = False,
         **strategy_kwargs: Any,
     ) -> None:
         if on_error not in ("strict", "degrade"):
             raise ValueError(f"on_error must be 'strict' or 'degrade'; got {on_error!r}")
+        if not isinstance(benchmark, bool):
+            raise TypeError(f"benchmark must be a bool; got {type(benchmark).__name__!r}")
         self.core = CoherenceAdapterCore(strategy_name=strategy, **strategy_kwargs)
         self._on_metric = on_metric
         self._telemetry: TelemetryExporter = build_telemetry(telemetry)
@@ -76,6 +83,13 @@ class CCSStore(BaseStore):
         self._namespace_index: dict[tuple[str, ...], set[str]] = {}
         # plain dict fallback when on_error="degrade"; keyed by (scope, key)
         self._fallback_store: dict[tuple[tuple[str, ...], str], Any] = {}
+        # degradation tracking (R8 additions)
+        self._degradation_count: int = 0
+        # inline benchmark counters — None when benchmark=False (zero overhead)
+        self._bm_baseline: int | None = 0 if benchmark else None
+        self._bm_actual: int | None = 0 if benchmark else None
+        self._bm_ops: int | None = 0 if benchmark else None
+        self._bm_hits: int | None = 0 if benchmark else None
 
     # ------------------------------------------------------------------
     # BaseStore interface — batch is the single implementation point
@@ -151,8 +165,16 @@ class CCSStore(BaseStore):
                 scope_key = (tuple(namespace[1:]), key)
                 value = self._fallback_store.get(scope_key, {})
                 degraded = True
+                if self._degradation_count == 0:
+                    warnings.warn(
+                        f"CCSStore degraded to fallback on get {namespace!r} {key!r}: {exc}",
+                        CoherenceDegradedWarning,
+                        stacklevel=4,
+                    )
+                self._degradation_count += 1
 
         tokens = 1 if cache_hit else self._estimate_tokens(value)
+        tokens_saved = max(0, self._estimate_tokens(value) - 1) if cache_hit else 0
         event = StoreMetricEvent(
             operation="degraded" if degraded else "get",
             namespace=namespace,
@@ -163,10 +185,18 @@ class CCSStore(BaseStore):
             tokens_consumed=tokens,
             cache_hit=cache_hit,
             tick=tick,
+            tokens_saved_estimate=tokens_saved,
         )
         if self._on_metric is not None:
             self._on_metric(event)
         self._telemetry.on_event(event)
+
+        if self._bm_baseline is not None:
+            self._bm_baseline += self._estimate_tokens(value)
+            self._bm_actual += tokens  # type: ignore[operator]
+            self._bm_ops += 1  # type: ignore[operator]
+            if cache_hit:
+                self._bm_hits += 1  # type: ignore[operator]
 
         now = datetime.now(tz=timezone.utc)
         return Item(value=value, key=key, namespace=namespace, created_at=now, updated_at=now)
@@ -208,6 +238,13 @@ class CCSStore(BaseStore):
             scope_key = (tuple(namespace[1:]), key)
             self._fallback_store[scope_key] = value
             degraded = True
+            if self._degradation_count == 0:
+                warnings.warn(
+                    f"CCSStore degraded to fallback on put {namespace!r} {key!r}: {exc}",
+                    CoherenceDegradedWarning,
+                    stacklevel=4,
+                )
+            self._degradation_count += 1
 
         full_ns = tuple(namespace)
         if full_ns not in self._namespace_index:
@@ -334,6 +371,63 @@ class CCSStore(BaseStore):
             namespaces = list({ns[: op.max_depth] for ns in namespaces})
 
         return namespaces[op.offset : op.offset + op.limit]
+
+    # ------------------------------------------------------------------
+    # Degradation visibility (R8 additions)
+    # ------------------------------------------------------------------
+
+    @property
+    def is_degraded(self) -> bool:
+        """True if at least one coherence error has occurred on this instance."""
+        return self._degradation_count > 0
+
+    @property
+    def degradation_count(self) -> int:
+        """Number of coherence errors that degraded to fallback on this instance."""
+        return self._degradation_count
+
+    # ------------------------------------------------------------------
+    # Inline benchmark mode (R9)
+    # ------------------------------------------------------------------
+
+    def benchmark_summary(self) -> dict[str, float | int]:
+        """Return token-savings summary for this store instance.
+
+        Raises RuntimeError if the store was not created with benchmark=True.
+        """
+        if self._bm_baseline is None:
+            raise RuntimeError("CCSStore was not created with benchmark=True")
+        baseline = self._bm_baseline
+        actual = self._bm_actual  # type: ignore[assignment]
+        ops = self._bm_ops  # type: ignore[assignment]
+        hits = self._bm_hits  # type: ignore[assignment]
+        tokens_saved = baseline - actual
+        return {
+            "baseline_tokens": baseline,
+            "ccs_tokens": actual,
+            "tokens_saved": tokens_saved,
+            "token_reduction_pct": round(tokens_saved / baseline * 100, 1) if baseline > 0 else 0.0,
+            "cache_hit_rate": round(hits / ops, 3) if ops > 0 else 0.0,
+            "n_operations": ops,
+        }
+
+    def print_benchmark_summary(self) -> None:
+        """Print a formatted benchmark summary table to stdout."""
+        s = self.benchmark_summary()
+        baseline = s["baseline_tokens"]
+        actual = s["ccs_tokens"]
+        saved = s["tokens_saved"]
+        ops = s["n_operations"]
+        hit_rate = s["cache_hit_rate"]
+        reduction = s["token_reduction_pct"]
+        print()
+        print("  CCSStore Benchmark Summary")
+        print(f"  {'─' * 38}")
+        print(f"  Baseline tokens (no cache):  {baseline:>8}")
+        print(f"  CCSStore tokens:             {actual:>8}")
+        print(f"  Tokens saved:                {saved:>8}")
+        print(f"  Token reduction:             {reduction:>7.1f}%")
+        print(f"  Cache hit rate:              {hit_rate:>7.1%}  ({ops} get ops)")
 
     # ------------------------------------------------------------------
     # Registration helpers
