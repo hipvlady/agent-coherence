@@ -10,3 +10,4 @@ build/
 .venv/
 venv/
 .env
+benchmarks/results/latest.json
