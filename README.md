@@ -177,6 +177,17 @@ python benchmarks/langgraph_real/bench_high_churn.py
 | Code review (moderate) | 3 | 8:3 | 60% | 5,320 | 2,835 | **47%** |
 | High-churn (write-heavy) | 4 | 8:4 | 50% | 3,250 | 2,317 | **29%** |
 
+### Benchmark your own workload
+
+```bash
+pip install "agent-coherence[langgraph,benchmark]"
+ccs-benchmark --graph path/to/your_graph.py:build_graph
+```
+
+The factory must accept a single `store` argument and return a compiled LangGraph graph
+(`builder.compile(store=store)`). The CLI runs the graph once and prints a token savings
+summary. Use `--initial-state '{"key": "value"}'` to pass a custom input dict.
+
 ### How to read these numbers
 
 **Savings scale with read/write ratio.** Every write triggers invalidation, which forces the
