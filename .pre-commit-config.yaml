@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: check-benchmark-readme-numbers
+        name: Check README benchmark numbers match expected.json
+        language: python
+        entry: python tools/check_readme_numbers.py
+        files: (benchmarks/expected\.json|README\.md)
+        pass_filenames: false

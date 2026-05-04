@@ -13,11 +13,13 @@ precisely when they change, instead of being rebroadcast on every step.
 3. [Namespace convention](#namespace-convention)
 4. [Strategies](#strategies)
 5. [Observability](#observability)
-6. [Telemetry](#telemetry)
-7. [Graceful degradation](#graceful-degradation)
-8. [Examples](#examples)
-9. [Real-workload benchmarks](#real-workload-benchmarks)
-10. [API reference](#api-reference)
+6. [Inline benchmark mode](#inline-benchmark-mode)
+7. [Telemetry](#telemetry)
+8. [Graceful degradation](#graceful-degradation)
+9. [Examples](#examples)
+10. [Real-workload benchmarks](#real-workload-benchmarks)
+11. [Benchmarking your own workload](#benchmarking-your-own-workload)
+12. [API reference](#api-reference)
 
 ---
 
@@ -143,6 +145,39 @@ Token estimation: `max(1, len(json.dumps(value)) // 4)`. Override by including
 
 ---
 
+## Inline benchmark mode
+
+Measure token savings on your own workload without any external tooling:
+
+```python
+store = CCSStore(strategy="lazy", benchmark=True)
+
+# ... run your graph ...
+
+store.print_benchmark_summary()
+```
+
+`benchmark=False` (default) adds zero overhead — no counters are allocated.
+
+For programmatic access, use `benchmark_summary()`:
+
+```python
+summary = store.benchmark_summary()
+# {
+#   "baseline_tokens": 4160,
+#   "ccs_tokens": 1301,
+#   "tokens_saved": 2859,
+#   "token_reduction_pct": 68.7,
+#   "cache_hit_rate": 0.75,
+#   "n_operations": 16,
+# }
+```
+
+`benchmark_summary()` raises `RuntimeError` if the store was not created with
+`benchmark=True`.
+
+---
+
 ## Telemetry
 
 Structured metrics without changing node code.
@@ -247,6 +282,15 @@ Use `on_error="strict"` (the default) in development and CI. Consider
 `on_error="degrade"` in production environments where a coherence bug should not
 take down the whole graph.
 
+Two attributes let you check degradation state after the fact:
+
+```python
+store.is_degraded       # True after the first degraded operation
+store.degradation_count  # total number of degraded operations
+```
+
+Use these to gate alerts or health checks without keeping a separate event list.
+
 ---
 
 ## Examples
@@ -258,6 +302,7 @@ All examples are runnable with `python -m examples.<name>.main` from the project
 | LangGraph planner | `python -m examples.langgraph_planner.main` | 4-agent, 1 artifact, 75% hit rate |
 | Code review pipeline | `python -m examples.code_review.main` | 3-agent, SHARED state transitions |
 | Research pipeline | `python -m examples.research_pipeline.main` | 4-agent, 3 artifacts, 60% hit rate |
+| Shared codebase | `python -m examples.shared_codebase.main` | 4-agent code review, 37.6% savings, benchmark output |
 
 ### Code review pipeline
 
@@ -277,6 +322,13 @@ by `analyst` — each artifact key has its own independent MESI state per agent.
 
 Results from real LangGraph graph executions using `GenericFakeChatModel` (no live
 LLM calls). Run them yourself:
+
+```bash
+pip install "agent-coherence[langgraph,benchmark]"
+make benchmark    # all three workloads, prints consolidated table
+```
+
+Or run individually:
 
 ```bash
 python benchmarks/langgraph_real/bench_planner.py
@@ -301,13 +353,42 @@ For the simulation-based results from the paper (84–95% savings), see
 
 ---
 
+## Benchmarking your own workload
+
+```bash
+pip install "agent-coherence[langgraph,benchmark]"
+ccs-benchmark --graph path/to/my_graph.py:build_graph
+```
+
+The factory function must accept a single `store` argument and return a compiled
+LangGraph graph:
+
+```python
+def build_graph(store):
+    builder = StateGraph(...)
+    # ... add nodes/edges ...
+    return builder.compile(store=store)
+```
+
+Pass a custom input state with `--initial-state`:
+
+```bash
+ccs-benchmark --graph my_graph.py:build_graph --initial-state '{"query": "hello"}'
+```
+
+The CLI runs the graph once and prints `print_benchmark_summary()` output. For
+inline benchmarking without the CLI, see [Inline benchmark mode](#inline-benchmark-mode).
+
+---
+
 ## API reference
 
-### `CCSStore(strategy, on_metric, telemetry, on_error, **strategy_kwargs)`
+### `CCSStore(strategy, benchmark, on_metric, telemetry, on_error, **strategy_kwargs)`
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `strategy` | `str` | `"lazy"` | Synchronization strategy: `"lazy"`, `"eager"`, `"lease"`, `"access_count"`, `"broadcast"` |
+| `benchmark` | `bool` | `False` | Enable inline token-savings measurement; access results via `benchmark_summary()` / `print_benchmark_summary()` |
 | `on_metric` | `Callable[[StoreMetricEvent], None] \| None` | `None` | Callback fired after every operation |
 | `telemetry` | `str \| TelemetryExporter \| None` | `None` | `"opentelemetry"`, `"langsmith"`, a `TelemetryExporter` instance, or `None` |
 | `on_error` | `str` | `"strict"` | `"strict"` to propagate `CoherenceError`; `"degrade"` to fall back silently |

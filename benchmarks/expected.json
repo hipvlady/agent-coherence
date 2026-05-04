@@ -1,0 +1,22 @@
+{
+  "workloads": [
+    {
+      "name": "4-agent planning pipeline (read-heavy)",
+      "baseline_tokens": 4160,
+      "ccs_tokens": 1301,
+      "token_reduction_pct": 68.73
+    },
+    {
+      "name": "3-agent code review (write-moderate)",
+      "baseline_tokens": 5320,
+      "ccs_tokens": 2835,
+      "token_reduction_pct": 46.71
+    },
+    {
+      "name": "4-agent high-churn (write-heavy)",
+      "baseline_tokens": 3250,
+      "ccs_tokens": 2317,
+      "token_reduction_pct": 28.71
+    }
+  ]
+}
