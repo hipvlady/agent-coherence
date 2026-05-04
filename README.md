@@ -159,6 +159,13 @@ Measured on real LangGraph `StateGraph` executions using `GenericFakeChatModel` 
 LLM API calls, so the results are reproducible in CI. Run them yourself:
 
 ```bash
+pip install "agent-coherence[langgraph,benchmark]"
+make benchmark    # runs all three workloads, prints consolidated table
+```
+
+Or run individually:
+
+```bash
 python benchmarks/langgraph_real/bench_planner.py
 python benchmarks/langgraph_real/bench_code_review.py
 python benchmarks/langgraph_real/bench_high_churn.py
@@ -213,6 +220,8 @@ is a one-line import change.
 - A token optimization layer for multi-agent workloads built on MESI cache coherence
 - A way to detect stale-read bugs that trace-only tools can't see
 - Built on a TLA+-verified protocol
+
+Orchestration frameworks decide which agents run; agent-coherence decides what version they read.
 
 **CCSStore is not:**
 
@@ -313,11 +322,12 @@ Shipped in `v0.2`:
 - Telemetry exporters: OpenTelemetry and LangSmith (`ccs.adapters.telemetry`)
 - Graceful degradation (`on_error="degrade"`)
 
-Coming next:
+Coming next in v0.3:
 
-- Optimistic-locking strategy for high-contention workloads
-- Async coordinator for large agent fleets
-- Persistent backend (PostgresStore compatibility)
+- Reproducible benchmark harness — `make benchmark` runs all three real-workload benchmarks
+  in one command and guards against README number drift in CI
+- `ccs-benchmark` CLI for benchmarking custom workloads against your own LangGraph graphs
+- State transitions log spec for external tool integration (pending validation)
 
 This is an alpha release. APIs may change before `v1.0`.
 
