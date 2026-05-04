@@ -90,10 +90,33 @@ jobs:
       - name: Run benchmark regression smoke
         run: python tools/benchmark_regression_smoke.py
 
+  benchmark-regression:
+    name: Benchmark Regression
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package and LangGraph benchmark dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[langgraph,benchmark]"
+
+      - name: Run benchmarks
+        run: make benchmark
+
+      - name: Check benchmark regression
+        run: python tools/benchmark_drift_check.py
+
   build:
     name: Build Package
     runs-on: ubuntu-latest
-    needs: [architecture, test, benchmark-smoke]
+    needs: [architecture, test, benchmark-smoke, benchmark-regression]
 
     steps:
       - uses: actions/checkout@v4
