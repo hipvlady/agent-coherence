@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from ccs.agent.runtime import AgentRuntime
@@ -37,9 +37,11 @@ class CoherenceAdapterCore:
         lease_ttl_ticks: int = 300,
         access_count_max_accesses: int = 100,
         event_bus: InMemoryEventBus | None = None,
+        state_log: Callable[[dict], None] | None = None,
         **strategy_kwargs: Any,
     ) -> None:
-        self.registry = ArtifactRegistry()
+        self._agent_names: dict[UUID, str] = {}
+        self.registry = ArtifactRegistry(state_log=state_log, agent_names=self._agent_names)
         self.coordinator = CoordinatorService(self.registry)
         self.strategy: SyncStrategy = build_strategy(
             strategy_name,
@@ -56,6 +58,7 @@ class CoherenceAdapterCore:
             return existing.agent_id
 
         agent_id = uuid5(NAMESPACE_URL, f"ccs-agent:{name}")
+        self._agent_names[agent_id] = name
         runtime = AgentRuntime(agent_id=agent_id, coordinator=self.coordinator, strategy=self.strategy)
         self.event_bus.subscribe(
             agent_id=agent_id,

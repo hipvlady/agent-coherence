@@ -12,6 +12,7 @@ import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 # benchmarks/ is a namespace package at the repo root — not on sys.path when this
 # script is invoked as `python tools/run_benchmarks.py` (Python adds the script's
@@ -20,17 +21,19 @@ _REPO_ROOT = Path(__file__).parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from benchmarks.langgraph_real import bench_code_review, bench_high_churn, bench_planner  # noqa: E402
-from benchmarks.langgraph_real._scaffold import ComparisonResult  # noqa: E402
 _RESULTS_DIR = _REPO_ROOT / "benchmarks" / "results"
 _LATEST_PATH = _RESULTS_DIR / "latest.json"
 _EXPECTED_PATH = _REPO_ROOT / "benchmarks" / "expected.json"
-
-_BENCHMARKS = [bench_planner, bench_code_review, bench_high_churn]
 _COL_WIDTH = 42
 
 
-def _workload_entry(result: ComparisonResult) -> dict:
+def _load_benchmarks() -> list[Any]:
+    from benchmarks.langgraph_real import bench_code_review, bench_high_churn, bench_planner
+
+    return [bench_planner, bench_code_review, bench_high_churn]
+
+
+def _workload_entry(result: Any) -> dict:
     return {
         "name": result.label,
         "baseline_tokens": result.baseline_tokens,
@@ -56,7 +59,7 @@ def _print_summary_table(workloads: list[dict]) -> None:
 
 
 def main() -> None:
-    results = [bench.run() for bench in _BENCHMARKS]
+    results = [bench.run() for bench in _load_benchmarks()]
     workloads = [_workload_entry(r) for r in results]
 
     _print_summary_table(workloads)

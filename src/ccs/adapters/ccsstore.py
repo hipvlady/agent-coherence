@@ -62,13 +62,14 @@ class CCSStore(BaseStore):
         telemetry: str | TelemetryExporter | None = None,
         on_error: str = "strict",
         benchmark: bool = False,
+        state_log: Callable[[dict], None] | None = None,
         **strategy_kwargs: Any,
     ) -> None:
         if on_error not in ("strict", "degrade"):
             raise ValueError(f"on_error must be 'strict' or 'degrade'; got {on_error!r}")
         if not isinstance(benchmark, bool):
             raise TypeError(f"benchmark must be a bool; got {type(benchmark).__name__!r}")
-        self.core = CoherenceAdapterCore(strategy_name=strategy, **strategy_kwargs)
+        self.core = CoherenceAdapterCore(strategy_name=strategy, state_log=state_log, **strategy_kwargs)
         self._on_metric = on_metric
         self._telemetry: TelemetryExporter = build_telemetry(telemetry)
         self._on_error = on_error
