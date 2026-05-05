@@ -104,6 +104,16 @@ store = CCSStore(strategy="lazy", on_metric=events.append)
 # each StoreMetricEvent carries: operation, cache_hit, tokens_consumed, tokens_saved_estimate, tick
 ```
 
+**State transitions log** — stream every MESI state change to an external tool:
+
+```python
+log = []
+store = CCSStore(strategy="lazy", state_log=log.append)
+# each entry: {tick, artifact_id, agent_id, agent_name, from_state, to_state, trigger, version}
+```
+
+Write to JSONL for offline analysis or pass any callable. `state_log=None` (default) adds zero overhead.
+
 **Telemetry** — export to OpenTelemetry or LangSmith with one parameter:
 
 ```python
@@ -320,7 +330,16 @@ additional savings.
 
 ## Status
 
-`v0.2` ships inline benchmarking, expanded telemetry, and the shared-codebase example.
+`v0.3` ships the state transitions log, a reproducible benchmark harness, and the
+`ccs-benchmark` CLI.
+
+Shipped in `v0.3`:
+
+- **State transitions log** — `CCSStore(state_log=cb)` streams every MESI state change
+  as a structured dict; zero overhead when unused
+- **Reproducible benchmark harness** — `make benchmark` runs all three real-workload
+  benchmarks in one command and guards against README number drift in CI
+- **`ccs-benchmark` CLI** — benchmark custom LangGraph workloads without writing test code
 
 Shipped in `v0.2`:
 
@@ -332,13 +351,6 @@ Shipped in `v0.2`:
 - Production benchmarks on real LangGraph deployments (`benchmarks/langgraph_real/`)
 - Telemetry exporters: OpenTelemetry and LangSmith (`ccs.adapters.telemetry`)
 - Graceful degradation (`on_error="degrade"`)
-
-Coming next in v0.3:
-
-- Reproducible benchmark harness — `make benchmark` runs all three real-workload benchmarks
-  in one command and guards against README number drift in CI
-- `ccs-benchmark` CLI for benchmarking custom workloads against your own LangGraph graphs
-- State transitions log spec for external tool integration (pending validation)
 
 This is an alpha release. APIs may change before `v1.0`.
 

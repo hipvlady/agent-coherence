@@ -1,8 +1,8 @@
 # State Transitions Log — Proposal
 
-**Status:** Draft — pending validation with external integrators  
+**Status:** Implemented — shipped in v0.3  
 **Validation gate:** 2+ discovery contacts confirm the schema is useful by 2026-05-16  
-**Implementation target:** v0.3 if validated; v0.4 otherwise
+**Implementation:** `CCSStore(state_log=cb)` — see [docs/ccsstore.md](../ccsstore.md#state-transitions-log)
 
 ---
 
