@@ -41,7 +41,7 @@ class CoordinatorService:
         )
         self.registry.register_artifact(artifact, content)
         if initial_owner is not None:
-            self.registry.set_agent_state(artifact.id, initial_owner, MESIState.EXCLUSIVE)
+            self.registry.set_agent_state(artifact.id, initial_owner, MESIState.EXCLUSIVE, trigger="register", tick=0)
         return artifact
 
     def fetch(self, request: FetchRequest) -> FetchResponse:
@@ -68,9 +68,9 @@ class CoordinatorService:
         if other_holders:
             # Multiple readers must stay coherent; downgrade any exclusive/modified holder.
             for agent_id in other_holders:
-                self.registry.set_agent_state(request.artifact_id, agent_id, MESIState.SHARED)
+                self.registry.set_agent_state(request.artifact_id, agent_id, MESIState.SHARED, trigger="fetch", tick=request.requested_at_tick)
 
-        self.registry.set_agent_state(request.artifact_id, request.requesting_agent_id, grant)
+        self.registry.set_agent_state(request.artifact_id, request.requesting_agent_id, grant, trigger="fetch", tick=request.requested_at_tick)
         self.registry.clear_agent_transient(request.artifact_id, request.requesting_agent_id)
         self._validate_single_writer(request.artifact_id)
 
@@ -108,7 +108,7 @@ class CoordinatorService:
                     transient,
                     entered_tick=issued_at_tick,
                 )
-            self.registry.set_agent_state(artifact_id, peer_id, MESIState.INVALID)
+            self.registry.set_agent_state(artifact_id, peer_id, MESIState.INVALID, trigger="write", tick=issued_at_tick)
             signals.append(
                 InvalidationSignal(
                     artifact_id=artifact_id,
@@ -118,7 +118,7 @@ class CoordinatorService:
                 )
             )
 
-        self.registry.set_agent_state(artifact_id, agent_id, MESIState.EXCLUSIVE)
+        self.registry.set_agent_state(artifact_id, agent_id, MESIState.EXCLUSIVE, trigger="write", tick=issued_at_tick)
         self.registry.clear_agent_transient(artifact_id, agent_id)
         self._validate_single_writer(artifact_id)
         return signals
@@ -186,7 +186,7 @@ class CoordinatorService:
                     transient,
                     entered_tick=issued_at_tick,
                 )
-            self.registry.set_agent_state(artifact_id, peer_id, MESIState.INVALID)
+            self.registry.set_agent_state(artifact_id, peer_id, MESIState.INVALID, trigger="commit", tick=issued_at_tick)
             signals.append(
                 InvalidationSignal(
                     artifact_id=artifact_id,
@@ -195,7 +195,7 @@ class CoordinatorService:
                     issuer_agent_id=agent_id,
                 )
             )
-        self.registry.set_agent_state(artifact_id, agent_id, MESIState.MODIFIED)
+        self.registry.set_agent_state(artifact_id, agent_id, MESIState.MODIFIED, trigger="commit", tick=issued_at_tick)
         self.registry.clear_agent_transient(artifact_id, agent_id)
         self._validate_single_writer(artifact_id)
         return updated, signals
@@ -216,7 +216,7 @@ class CoordinatorService:
         """
         if not self.registry.has_artifact(artifact_id):
             return None
-        self.registry.set_agent_state(artifact_id, agent_id, MESIState.INVALID)
+        self.registry.set_agent_state(artifact_id, agent_id, MESIState.INVALID, trigger="invalidate", tick=issued_at_tick)
         self.registry.clear_agent_transient(artifact_id, agent_id)
         return InvalidationSignal(
             artifact_id=artifact_id,
@@ -268,7 +268,7 @@ class CoordinatorService:
                     continue
 
                 # Conservative fail-safe: transient timeout always forces local invalidation.
-                self.registry.set_agent_state(artifact_id, agent_id, MESIState.INVALID)
+                self.registry.set_agent_state(artifact_id, agent_id, MESIState.INVALID, trigger="timeout", tick=current_tick)
                 self.registry.clear_agent_transient(artifact_id, agent_id)
                 expired += 1
 

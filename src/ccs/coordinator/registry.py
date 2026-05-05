@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 from uuid import UUID
 
 from ccs.core.states import MESIState, TransientState
@@ -28,8 +28,15 @@ class ArtifactRecord:
 class ArtifactRegistry:
     """Canonical in-memory artifact directory and payload store."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        state_log: Callable[[dict], None] | None = None,
+        agent_names: dict[UUID, str] | None = None,
+    ) -> None:
         self._records: dict[UUID, ArtifactRecord] = {}
+        self._state_log = state_log
+        self._agent_names = agent_names
 
     def register_artifact(self, artifact: Artifact, content: str) -> None:
         """Insert artifact record into registry."""
@@ -74,9 +81,29 @@ class ArtifactRegistry:
         """Return MESI state for one agent/artifact pair if present."""
         return self._records[artifact_id].state_by_agent.get(agent_id)
 
-    def set_agent_state(self, artifact_id: UUID, agent_id: UUID, state: MESIState) -> None:
+    def set_agent_state(
+        self,
+        artifact_id: UUID,
+        agent_id: UUID,
+        state: MESIState,
+        *,
+        trigger: str = "unknown",
+        tick: int = 0,
+    ) -> None:
         """Set MESI state for one agent/artifact pair."""
+        from_state = self._records[artifact_id].state_by_agent.get(agent_id, MESIState.INVALID)
         self._records[artifact_id].state_by_agent[agent_id] = state
+        if self._state_log is not None:
+            self._state_log({
+                "tick": tick,
+                "artifact_id": str(artifact_id),
+                "agent_id": str(agent_id),
+                "agent_name": self._agent_names.get(agent_id) if self._agent_names is not None else None,
+                "from_state": from_state.name,
+                "to_state": state.name,
+                "trigger": trigger,
+                "version": self._records[artifact_id].artifact.version,
+            })
 
     def get_agent_transient(self, artifact_id: UUID, agent_id: UUID) -> TransientState | None:
         """Return transient state for one agent/artifact pair if present."""
