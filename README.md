@@ -101,18 +101,42 @@ from ccs.adapters import CCSStore, StoreMetricEvent
 
 events = []
 store = CCSStore(strategy="lazy", on_metric=events.append)
-# each StoreMetricEvent carries: operation, cache_hit, tokens_consumed, tokens_saved_estimate, tick
+# each StoreMetricEvent carries: operation, cache_hit, tokens_consumed,
+#   tokens_saved_estimate, tick, sequence_number, instance_id, schema_version
 ```
 
 **State transitions log** — stream every MESI state change to an external tool:
 
 ```python
-log = []
-store = CCSStore(strategy="lazy", state_log=log.append)
-# each entry: {tick, artifact_id, agent_id, agent_name, from_state, to_state, trigger, version}
+import json
+
+log_entries: list[dict] = []
+store = CCSStore(strategy="lazy", state_log=log_entries.append)
+# each entry: {tick, artifact_id, agent_id, agent_name, from_state, to_state,
+#              trigger, version, sequence_number, instance_id, schema_version}
+
+# or write to JSONL for offline analysis
+with open("transitions.jsonl", "w") as f:
+    store = CCSStore(
+        strategy="lazy",
+        state_log=lambda e: f.write(json.dumps(e) + "\n"),
+    )
 ```
 
-Write to JSONL for offline analysis or pass any callable. `state_log=None` (default) adds zero overhead.
+`state_log=None` (default) adds zero overhead.
+
+**Log validation** — verify a materialized JSONL log for gaps and schema drift:
+
+```python
+from ccs.validation import validate_log, CCS_STATE_LOG_SCHEMA_VERSION
+
+gaps, mismatches = validate_log(
+    "transitions.jsonl",
+    schema_version=CCS_STATE_LOG_SCHEMA_VERSION,
+)
+# gaps: list of dropped-event positions; mismatches: list of schema version changes
+# returns ([], []) on a clean log
+```
 
 **Telemetry** — export to OpenTelemetry or LangSmith with one parameter:
 
@@ -325,13 +349,23 @@ workload has a read/write ratio above `3:1`, expect 50–70% in production.
 Yes. The benchmark table measures realistic agent patterns. Under more read-heavy conditions
 (larger artifacts, more agents, fewer writes) percentage savings increase. For higher
 absolute savings, use larger shared artifacts — savings scale linearly with artifact size.
-CCSStore `v0.2` operates at the whole-artifact level; partial-read APIs would unlock
-additional savings.
+CCSStore operates at the whole-artifact level; partial-read APIs would unlock additional
+savings.
 
 ## Status
 
-`v0.3` ships the state transitions log, a reproducible benchmark harness, and the
-`ccs-benchmark` CLI.
+`v0.4` ships sequence-numbered event streams with gap detection.
+
+Shipped in `v0.4`:
+
+- **Sequence-numbered streams** — every state log entry and `StoreMetricEvent` now carries
+  `sequence_number`, `instance_id`, and `schema_version`; gap detection is reliable across
+  multi-session JSONL files
+- **`ccs.validation.validate_log`** — stdlib-only helper for materialized log consumers;
+  detects dropped events and schema drift, returns `(gaps, mismatches)` or raises `ValueError`
+  on malformed input; importable independently of the CCS runtime
+- **Schema version constants** — `CCS_STATE_LOG_SCHEMA_VERSION = "ccs.state_log.v1"` and
+  `CCS_METRIC_SCHEMA_VERSION = "ccs.metric.v1"` exported from `ccs.validation`
 
 Shipped in `v0.3`:
 
