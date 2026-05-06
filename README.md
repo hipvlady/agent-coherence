@@ -49,7 +49,7 @@ codebase-review workload.
 
 - 📄 [Paper on arXiv (2603.15183)](https://arxiv.org/abs/2603.15183) — formal protocol, TLA+ verification, simulation results
 - 📊 [Real benchmarks](#real-workload-benchmarks) — measured on actual LangGraph graphs
-- 🔧 [User guide](docs/ccsstore.md) — strategies, telemetry, examples
+- 🔧 [User guide](docs/guide.md) — strategies, telemetry, examples
 
 ---
 
@@ -80,7 +80,7 @@ Five synchronization strategies ship out of the box: `lazy` (default), `eager`, 
 scope. Two agents writing to `("planner", "shared")` and `("reviewer", "shared")` address
 the same artifact.
 
-See [docs/ccsstore.md](docs/ccsstore.md) for the full guide: namespace convention,
+See [docs/guide.md](docs/guide.md) for the full guide: namespace convention,
 strategies, observability, telemetry, graceful degradation, examples, and API reference.
 
 ## Real-workload benchmarks
