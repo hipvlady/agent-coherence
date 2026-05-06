@@ -128,6 +128,9 @@ summary. Use `--initial-state '{"key": "value"}'` to pass a custom input dict.
 `v0.4` released. See [releases](https://github.com/hipvlady/agent-coherence/releases) for
 full history. Alpha — APIs may change before `v1.0`.
 
+**What's new in v0.4:** sequence-numbered event streams and `validate_log` for replay
+correctness checks.
+
 ## Paper
 
 **Token Coherence: Adapting MESI Cache Protocols to Minimize
