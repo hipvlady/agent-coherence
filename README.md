@@ -55,21 +55,11 @@ codebase-review workload.
 
 ## How it works
 
-When multiple agents share working context — a plan, a codebase, a research document — most
-orchestration frameworks rebroadcast the full artifact to every agent on every step.
-On workloads with four or more agents and non-trivial artifacts, synchronization tokens
-dominate total cost.
-
-`agent-coherence` solves this with a coherence protocol borrowed from multi-core CPUs. Each
-shared artifact has a per-agent state — fresh, in-flight, or stale. Agents serve from a local
-cache when their copy is fresh; a write invalidates peers' copies so the next read fetches
-the new version.
-
-- **Reads** hit the local cache at zero token cost when the artifact hasn't changed.
-- **Writes** commit to a coordinator, which sends lightweight invalidation signals (~12 tokens)
-  to peers instead of rebroadcasting the full artifact.
-- **Consistency** is single-writer-multiple-reader per artifact, with bounded staleness — peers
-  re-fetch on next read.
+Each shared artifact is cached locally per agent and reads serve from the local cache when
+that copy is fresh. Writes commit to a coordinator, which sends lightweight invalidation
+signals (~12 tokens) to peers so the next read fetches the new version instead of rebroadcasting
+the full artifact. Consistency is single-writer-multiple-reader per artifact with bounded
+staleness — peers re-fetch on next read.
 
 Five synchronization strategies ship out of the box: `lazy` (default), `eager`, `lease`
 (TTL-based), `access_count`, and `broadcast`.
@@ -101,11 +91,15 @@ python benchmarks/langgraph_real/bench_code_review.py
 python benchmarks/langgraph_real/bench_high_churn.py
 ```
 
+Savings scale with read/write ratio:
+
 | Workload | Agents | Reads:Writes | Hit rate | Baseline tokens | CCSStore tokens | Savings |
 |---|---|---|---|---|---|---|
 | Planning (read-heavy) | 4 | 12:1 | 75% | 4,160 | 1,301 | **69%** |
 | Code review (moderate) | 3 | 8:3 | 60% | 5,320 | 2,835 | **47%** |
 | High-churn (write-heavy) | 4 | 8:4 | 50% | 3,250 | 2,317 | **29%** |
+
+For protocol-only simulation methodology, see [REPRODUCE.md](REPRODUCE.md).
 
 ### Benchmark your own workload
 
