@@ -6,11 +6,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Optional
-from uuid import UUID
+from typing import Any, Callable, Optional
+from uuid import UUID, uuid4
 
 from ccs.core.states import MESIState, TransientState
 from ccs.core.types import Artifact
+
+CCS_STATE_LOG_SCHEMA_VERSION = "ccs.state_log.v1"
 
 
 @dataclass
@@ -31,12 +33,20 @@ class ArtifactRegistry:
     def __init__(
         self,
         *,
-        state_log: Callable[[dict], None] | None = None,
+        state_log: Callable[[dict[str, Any]], None] | None = None,
         agent_names: dict[UUID, str] | None = None,
+        instance_id: str | None = None,
     ) -> None:
+        if state_log is not None and instance_id is None:
+            raise ValueError(
+                "instance_id must be provided when state_log is set; "
+                "pass instance_id=str(uuid4()) or route through CCSStore which manages it automatically"
+            )
         self._records: dict[UUID, ArtifactRecord] = {}
         self._state_log = state_log
         self._agent_names = agent_names
+        self._instance_id: str = instance_id if instance_id is not None else str(uuid4())
+        self._seq: int = 0
 
     def register_artifact(self, artifact: Artifact, content: str) -> None:
         """Insert artifact record into registry."""
@@ -94,7 +104,8 @@ class ArtifactRegistry:
         from_state = self._records[artifact_id].state_by_agent.get(agent_id, MESIState.INVALID)
         self._records[artifact_id].state_by_agent[agent_id] = state
         if self._state_log is not None:
-            self._state_log({
+            self._seq += 1
+            entry = {
                 "tick": tick,
                 "artifact_id": str(artifact_id),
                 "agent_id": str(agent_id),
@@ -103,7 +114,17 @@ class ArtifactRegistry:
                 "to_state": state.name,
                 "trigger": trigger,
                 "version": self._records[artifact_id].artifact.version,
-            })
+                "sequence_number": self._seq,
+                "instance_id": self._instance_id,
+                "schema_version": CCS_STATE_LOG_SCHEMA_VERSION,
+            }
+            try:
+                self._state_log(entry)
+            except Exception:
+                # Sequence number is reserved on success, not on attempt.
+                # Roll back so the next successful emission does not create a phantom gap.
+                self._seq -= 1
+                raise
 
     def get_agent_transient(self, artifact_id: UUID, agent_id: UUID) -> TransientState | None:
         """Return transient state for one agent/artifact pair if present."""

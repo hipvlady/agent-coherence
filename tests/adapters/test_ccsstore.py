@@ -790,5 +790,139 @@ def test_degraded_warning_not_emitted_on_second_degradation() -> None:
 
 
 def test_coherence_degraded_warning_importable_from_adapters() -> None:
-    from ccs.adapters import CoherenceDegradedWarning  # noqa: F401
+    from ccs.adapters import CoherenceDegradedWarning
     assert issubclass(CoherenceDegradedWarning, UserWarning)
+
+
+# ---------------------------------------------------------------------------
+# Unit 1: schema version constants and StoreMetricEvent new fields
+# ---------------------------------------------------------------------------
+
+def test_schema_version_constants_importable() -> None:
+    from ccs.coordinator.registry import CCS_STATE_LOG_SCHEMA_VERSION
+    from ccs.adapters.events import CCS_METRIC_SCHEMA_VERSION
+    assert CCS_STATE_LOG_SCHEMA_VERSION == "ccs.state_log.v1"
+    assert CCS_METRIC_SCHEMA_VERSION == "ccs.metric.v1"
+
+
+def test_store_metric_event_new_fields_default_to_none() -> None:
+    event = StoreMetricEvent(
+        operation="get",
+        namespace=("a", "b"),
+        key="k",
+        agent_name="a",
+        tokens_consumed=1,
+        cache_hit=False,
+        tick=1,
+    )
+    assert event.sequence_number is None
+    assert event.instance_id is None
+    assert event.schema_version is None
+
+
+def test_store_metric_event_accepts_new_fields_as_kwargs() -> None:
+    event = StoreMetricEvent(
+        operation="get",
+        namespace=("a", "b"),
+        key="k",
+        agent_name="a",
+        tokens_consumed=1,
+        cache_hit=False,
+        tick=1,
+        sequence_number=3,
+        instance_id="abc-123",
+        schema_version="ccs.metric.v1",
+    )
+    assert event.sequence_number == 3
+    assert event.instance_id == "abc-123"
+    assert event.schema_version == "ccs.metric.v1"
+
+
+# ---------------------------------------------------------------------------
+# Unit 3: CCSStore instance_id, metric sequence counter, _emit_metric helper
+# ---------------------------------------------------------------------------
+
+def test_get_emits_sequence_number_1_then_2() -> None:
+    events: list[StoreMetricEvent] = []
+    store = _store(on_metric=events.append)
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    events.clear()
+    _get(store, ("planner", "shared"), "plan")
+    _get(store, ("planner", "shared"), "plan")
+    get_events = [e for e in events if e.operation == "get"]
+    assert get_events[0].sequence_number == 2  # put was seq=1
+    assert get_events[1].sequence_number == 3
+
+
+def test_put_increments_metric_seq() -> None:
+    events: list[StoreMetricEvent] = []
+    store = _store(on_metric=events.append)
+    _put(store, ("planner", "shared"), "a", {"v": 1})
+    _put(store, ("planner", "shared"), "b", {"v": 2})
+    put_events = [e for e in events if e.operation == "put"]
+    assert put_events[0].sequence_number == 1
+    assert put_events[1].sequence_number == 2
+
+
+def test_instance_id_on_metric_events_matches_store_instance() -> None:
+    events: list[StoreMetricEvent] = []
+    store = _store(on_metric=events.append)
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    assert events[0].instance_id == store._instance_id
+
+
+def test_schema_version_on_metric_events() -> None:
+    events: list[StoreMetricEvent] = []
+    store = _store(on_metric=events.append)
+    _put(store, ("planner", "shared"), "plan", {"v": 1})
+    assert events[0].schema_version == "ccs.metric.v1"
+
+
+def test_two_ccsstore_instances_have_distinct_instance_ids() -> None:
+    store_a = _store()
+    store_b = _store()
+    assert store_a._instance_id != store_b._instance_id
+
+
+def test_search_hit_increments_metric_seq_per_result() -> None:
+    events: list[StoreMetricEvent] = []
+    store = _store(on_metric=events.append)
+    _put(store, ("planner", "shared"), "a", {"v": 1})
+    _put(store, ("planner", "shared"), "b", {"v": 2})
+    events.clear()
+    store.batch([SearchOp(namespace_prefix=("planner",), filter=None, limit=10, offset=0)])
+    search_events = [e for e in events if e.operation == "search.hit"]
+    assert len(search_events) == 2
+    seqs = [e.sequence_number for e in search_events]
+    assert seqs[1] == seqs[0] + 1
+
+
+def test_out_of_sequence_event_produces_gap_in_validate_log(tmp_path) -> None:
+    """An event with sequence_number=0 triggers Gap(expected=1, found=0)."""
+    import json
+    from ccs.validation import validate_log, Gap
+    bad_line = {
+        "sequence_number": 0,
+        "instance_id": "some-id",
+        "schema_version": "ccs.metric.v1",
+        "operation": "get",
+    }
+    log_file = tmp_path / "test.jsonl"
+    log_file.write_text(json.dumps(bad_line) + "\n")
+    gaps, _ = validate_log(log_file, stream="metrics")
+    assert gaps == [Gap(stream="metrics", expected=1, found=0, at_index=0)]
+
+
+def test_none_sequence_number_raises_value_error(tmp_path) -> None:
+    """StoreMetricEvent with default None sequence_number raises ValueError in validate_log."""
+    import json
+    from ccs.validation import validate_log
+    bad_line = {
+        "sequence_number": None,
+        "instance_id": "some-id",
+        "schema_version": "ccs.metric.v1",
+    }
+    log_file = tmp_path / "test.jsonl"
+    log_file.write_text(json.dumps(bad_line) + "\n")
+    with pytest.raises(ValueError, match="sequence_number"):
+        validate_log(log_file)

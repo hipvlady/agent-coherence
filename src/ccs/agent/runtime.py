@@ -122,9 +122,13 @@ class AgentRuntime:
             ),
         )
         self._content_by_artifact[artifact_id] = content
-        self.coordinator.registry.set_agent_state(artifact_id, self.agent_id, MESIState.SHARED)
+        self.coordinator.registry.set_agent_state(
+            artifact_id, self.agent_id, MESIState.SHARED, trigger="update", tick=now_tick
+        )
         if writer_agent_id is not None:
-            self.coordinator.registry.set_agent_state(artifact_id, writer_agent_id, MESIState.SHARED)
+            self.coordinator.registry.set_agent_state(
+                artifact_id, writer_agent_id, MESIState.SHARED, trigger="update", tick=now_tick
+            )
 
     def content(self, artifact_id: UUID) -> str | None:
         """Return locally cached content body for artifact if present."""
