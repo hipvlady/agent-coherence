@@ -1,8 +1,6 @@
 # agent-coherence
 
-CCSStore is a drop-in token optimization layer for multi-agent LangGraph systems.
-It cuts shared-artifact token costs on realistic workloads — via MESI cache coherence,
-one import change.
+When two agents share state, one of them is usually reading a stale copy. `agent-coherence` makes that visible.
 
 [![CI](https://github.com/hipvlady/agent-coherence/actions/workflows/ci.yml/badge.svg)](https://github.com/hipvlady/agent-coherence/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/agent-coherence)](https://pypi.org/project/agent-coherence/)
@@ -21,6 +19,8 @@ store = InMemoryStore()
 from ccs.adapters import CCSStore
 store = CCSStore(strategy="lazy")
 ```
+
+On a stale read, `agent-coherence` surfaces the conflict in the run log instead of letting the agent silently work from outdated context.
 
 ```
 $ python -m examples.shared_codebase.main
@@ -47,11 +47,6 @@ codebase-review workload.
 > **Baseline:** tokens you would pay if every agent re-read every shared artifact from scratch —
 > equivalent to a graph without cross-agent caching. This is what `InMemoryStore` effectively does.
 
-> **ROI floor:** At 150 runs/day of a codebase-review-class workload, savings exceed **$3K/year** —
-> a defensible 30× return on a one-line integration. At 3,000 runs/day the math reaches enterprise
-> scale. For teams running small-artifact pipelines at under 500 runs/day, savings will be
-> proportionally smaller.
-
 - 📄 [Paper on arXiv (2603.15183)](https://arxiv.org/abs/2603.15183) — formal protocol, TLA+ verification, simulation results
 - 📊 [Real benchmarks](#real-workload-benchmarks) — measured on actual LangGraph graphs
 - 🔧 [User guide](docs/ccsstore.md) — strategies, telemetry, examples
@@ -65,10 +60,10 @@ orchestration frameworks rebroadcast the full artifact to every agent on every s
 On workloads with four or more agents and non-trivial artifacts, synchronization tokens
 dominate total cost.
 
-CCSStore solves this with the same approach multi-core CPUs have used since 1984: MESI cache
-coherence. Each shared artifact sits in one of four states per agent — **Modified**,
-**Exclusive**, **Shared**, or **Invalid**. Agents read from local cache when valid; only
-invalid cache entries trigger a network fetch.
+`agent-coherence` solves this with a coherence protocol borrowed from multi-core CPUs. Each
+shared artifact has a per-agent state — fresh, in-flight, or stale. Agents serve from a local
+cache when their copy is fresh; a write invalidates peers' copies so the next read fetches
+the new version.
 
 - **Reads** hit the local cache at zero token cost when the artifact hasn't changed.
 - **Writes** commit to a coordinator, which sends lightweight invalidation signals (~12 tokens)
@@ -85,107 +80,8 @@ Five synchronization strategies ship out of the box: `lazy` (default), `eager`, 
 scope. Two agents writing to `("planner", "shared")` and `("reviewer", "shared")` address
 the same artifact.
 
-**Inline benchmark mode** — measure token savings on your own workload without any external
-tooling:
-
-```python
-store = CCSStore(strategy="lazy", benchmark=True)
-# ... run your graph ...
-store.print_benchmark_summary()
-```
-
-**Observability** — pass `on_metric` to receive per-operation events:
-
-```python
-from ccs.adapters import CCSStore, StoreMetricEvent
-
-events = []
-store = CCSStore(strategy="lazy", on_metric=events.append)
-# each StoreMetricEvent carries: operation, cache_hit, tokens_consumed,
-#   tokens_saved_estimate, tick, sequence_number, instance_id, schema_version
-```
-
-**State transitions log** — stream every MESI state change to an external tool:
-
-```python
-import json
-
-log_entries: list[dict] = []
-store = CCSStore(strategy="lazy", state_log=log_entries.append)
-# each entry: {tick, artifact_id, agent_id, agent_name, from_state, to_state,
-#              trigger, version, sequence_number, instance_id, schema_version}
-
-# or write to JSONL for offline analysis
-with open("transitions.jsonl", "w") as f:
-    store = CCSStore(
-        strategy="lazy",
-        state_log=lambda e: f.write(json.dumps(e) + "\n"),
-    )
-```
-
-`state_log=None` (default) adds zero overhead.
-
-**Log validation** — verify a materialized JSONL log for gaps and schema drift:
-
-```python
-from ccs.validation import validate_log, CCS_STATE_LOG_SCHEMA_VERSION
-
-gaps, mismatches = validate_log(
-    "transitions.jsonl",
-    schema_version=CCS_STATE_LOG_SCHEMA_VERSION,
-)
-# gaps: list of dropped-event positions; mismatches: list of schema version changes
-# returns ([], []) on a clean log
-```
-
-**Telemetry** — export to OpenTelemetry or LangSmith with one parameter:
-
-```python
-store = CCSStore(strategy="lazy", telemetry="opentelemetry")
-store = CCSStore(strategy="lazy", telemetry="langsmith")
-```
-
-**Graceful degradation** — fall back to a plain dict instead of raising on coherence errors:
-
-```python
-store = CCSStore(strategy="lazy", on_error="degrade")
-# first degradation emits CoherenceDegradedWarning; store.is_degraded returns True after
-```
-
 See [docs/ccsstore.md](docs/ccsstore.md) for the full guide: namespace convention,
 strategies, observability, telemetry, graceful degradation, examples, and API reference.
-
-### Low-level adapter API
-
-For CrewAI, AutoGen, or custom integrations, use the `before_node` / `commit_outputs`
-surface directly:
-
-```python
-from ccs.adapters.langgraph import LangGraphAdapter
-
-adapter = LangGraphAdapter(strategy_name="lazy")
-for name in ("planner", "researcher", "executor"):
-    adapter.register_agent(name)
-plan = adapter.register_artifact(name="plan.md", content="v1")
-
-context = adapter.before_node(agent_name="planner", artifact_ids=[plan.id], now_tick=1)
-adapter.commit_outputs(
-    agent_name="planner",
-    writes={plan.id: context[plan.id]["content"] + "\nStep 1"},
-    now_tick=2,
-)
-```
-
-Full example: [`examples/multi_agent_planning.py`](examples/multi_agent_planning.py).
-
-### Running the examples
-
-```bash
-python -m examples.shared_codebase.main    # 4-agent code review, 16,820 tokens saved, $18K/year
-python -m examples.langgraph_planner.main  # 4-agent planning, 74.4% savings — smaller artifact illustration
-python -m examples.code_review.main        # 3-agent, SHARED state demo
-python -m examples.research_pipeline.main  # 4-agent, 3 artifacts, 60% hit rate
-```
 
 ## Real-workload benchmarks
 
@@ -222,171 +118,21 @@ The factory must accept a single `store` argument and return a compiled LangGrap
 (`builder.compile(store=store)`). The CLI runs the graph once and prints a token savings
 summary. Use `--initial-state '{"key": "value"}'` to pass a custom input dict.
 
-### How to read these numbers
-
-**Savings scale with read/write ratio.** Every write triggers invalidation, which forces the
-next read to be a miss.
-
-- **Read-heavy workloads (planners, reviewers, summarizers, retrievers): 60–70% savings.**
-- **Mixed workloads: 40–55% savings.**
-- **Write-heavy workloads: 25–35% savings.**
-
-### Where the paper's 84–95% figures come from
-
-The [arXiv paper](https://arxiv.org/abs/2603.15183) reports 84–95% reduction in
-**simulation** under controlled assumptions: sparse reads, high steps-per-artifact ratios,
-and low artifact volatility. Those numbers represent the protocol's theoretical ceiling.
-
-The real-workload numbers above represent what teams see on real LangGraph graphs today.
-Both are honest measurements of different things:
-
-| | Simulation (paper) | Real LangGraph (this repo) |
-|---|---|---|
-| What's measured | Protocol-only token cost | Full graph execution token cost |
-| Workload | Synthetic, controlled volatility | Realistic agent patterns |
-| Best case | 95% (Planning) | 69% (Planning) |
-| Worst case | 84% (High-churn) | 29% (High-churn) |
-
-If you want to reproduce the simulation results from the paper, see
-[REPRODUCE.md](REPRODUCE.md).
-
-### What this means for adoption
-
-If your multi-agent workload has a read/write ratio above roughly `3:1` — which most
-planning, research, review, and analysis pipelines do — expect 50–70% savings in
-production. If your workload is write-heavy, expect 25–35%. Either way, the integration
-is a one-line import change.
-
-## What CCSStore is — and isn't
-
-**CCSStore is:**
-
-- A drop-in `BaseStore` replacement for LangGraph
-- A token optimization layer for multi-agent workloads built on MESI cache coherence
-- A way to detect stale-read bugs that trace-only tools can't see
-- Built on a TLA+-verified protocol
-
-Orchestration frameworks decide which agents run; agent-coherence decides what version they read.
-
-**CCSStore is not:**
-
-- A prompt compiler
-- A replacement for LangSmith or Braintrust
-- A guaranteed 95% savings tool
-- A general-purpose key-value store
-
 ## Architecture
 
-`agent-coherence` is structured as four composable layers:
-
-- **Protocol** (`ccs.core`, `ccs.strategies`) — MESI state machine and synchronization
-  strategies. No framework dependencies.
-- **Coordinator** (`ccs.coordinator`) — Authority service tracking directory state and
-  publishing invalidations. Runs in-process or out-of-process.
-- **Event bus** (`ccs.bus`) — Pluggable transport for invalidation signals. Ships with an
-  in-memory bus; production deployments can swap in Redis, Kafka, NATS, or gRPC streams.
-- **Adapters** (`ccs.adapters`) — Framework integrations for LangGraph, CrewAI, and AutoGen.
-  Each ~100 lines; adding a new framework is straightforward.
-
-Each layer is independently useful and independently replaceable.
-
-## Guarantees
-
-The protocol is specified in TLA+ and model-checked with TLC. Verified properties:
-
-- **Safety** — Single-writer-multiple-reader per artifact and monotonic versions
-- **Token Coherence Theorem** — Lower bound on savings vs. broadcast for any workload with
-  write probability < 1
-- **Liveness** — Every invalidated cache eventually reaches a valid state
-
-See Section 6 of [the paper](https://arxiv.org/abs/2603.15183) for the formal model and
-proof details.
-
-## Why not just...
-
-**...use mem0 or Letta?** Retrieval-based memory does not solve concurrency. Two agents
-retrieving the same artifact and writing independently will clobber each other.
-`agent-coherence` is a coherence *protocol*, not a memory store — it composes with any
-retrieval backend.
-
-**...use LangGraph's `BaseStore`?** `BaseStore` provides persistence, not concurrency
-safety. The LangGraph docs explicitly warn users to handle concurrent writes themselves.
-`agent-coherence` is the layer that does that.
-
-**...use A2A?** A2A is the transport layer — how agents send tasks to each other.
-`agent-coherence` is the artifact coherence layer — how agents share state *while* they
-work. They compose.
-
-**...use Anthropic / OpenAI prompt caching?** Provider-side caching reduces per-agent prompt
-overhead but does not address inter-agent artifact synchronization. The two are
-complementary: prompt caching keeps the prefix cheap; coherence keeps the shared artifacts
-lean.
-
-## FAQ
-
-### The paper says 84–95%. Why does the benchmark table show 29–69%?
-
-Two different measurements, both honest. The paper measures protocol-only overhead in
-simulation under controlled assumptions. The 29–69% range is what you measure running
-CCSStore on a real LangGraph graph. The dollar story in the headline uses absolute token
-savings — percentage depends on read/write ratio, absolute savings depend on artifact size.
-Use the benchmark table for ROI expectations on your workload type. The 84–95% describes
-the protocol's theoretical ceiling under ideal conditions.
-
-### Why does the high-churn workload only save 29%?
-
-Write-heavy workloads are the protocol's lower bound by design. Every write triggers
-invalidation, which forces the next read to be a miss.
-
-### Will I see the simulation numbers in production?
-
-Almost certainly not. The simulation isolates the protocol from real-world factors like
-LangGraph's framework overhead, prompt construction, and extra artifact reads. If your
-workload has a read/write ratio above `3:1`, expect 50–70% in production.
-
-### Can I get higher percentage savings than the benchmark table shows?
-
-Yes. The benchmark table measures realistic agent patterns. Under more read-heavy conditions
-(larger artifacts, more agents, fewer writes) percentage savings increase. For higher
-absolute savings, use larger shared artifacts — savings scale linearly with artifact size.
-CCSStore operates at the whole-artifact level; partial-read APIs would unlock additional
-savings.
+- **Protocol** (`ccs.core`, `ccs.strategies`) — coherence state machine and synchronization
+  strategies; no framework dependencies.
+- **Coordinator** (`ccs.coordinator`) — authority service tracking directory state and
+  publishing invalidations; runs in-process or out-of-process.
+- **Adapters** (`ccs.adapters`) — framework integrations for LangGraph, CrewAI, and AutoGen;
+  ~100 lines each.
+- **Event bus** (`ccs.bus`) — pluggable transport for invalidation signals; in-memory by
+  default, swap in Redis, Kafka, NATS, or gRPC streams for production.
 
 ## Status
 
-`v0.4` ships sequence-numbered event streams with gap detection.
-
-Shipped in `v0.4`:
-
-- **Sequence-numbered streams** — every state log entry and `StoreMetricEvent` now carries
-  `sequence_number`, `instance_id`, and `schema_version`; gap detection is reliable across
-  multi-session JSONL files
-- **`ccs.validation.validate_log`** — stdlib-only helper for materialized log consumers;
-  detects dropped events and schema drift, returns `(gaps, mismatches)` or raises `ValueError`
-  on malformed input; importable independently of the CCS runtime
-- **Schema version constants** — `CCS_STATE_LOG_SCHEMA_VERSION = "ccs.state_log.v1"` and
-  `CCS_METRIC_SCHEMA_VERSION = "ccs.metric.v1"` exported from `ccs.validation`
-
-Shipped in `v0.3`:
-
-- **State transitions log** — `CCSStore(state_log=cb)` streams every MESI state change
-  as a structured dict; zero overhead when unused
-- **Reproducible benchmark harness** — `make benchmark` runs all three real-workload
-  benchmarks in one command and guards against README number drift in CI
-- **`ccs-benchmark` CLI** — benchmark custom LangGraph workloads without writing test code
-
-Shipped in `v0.2`:
-
-- **Inline benchmark mode** — `CCSStore(benchmark=True)` + `print_benchmark_summary()`
-- **Degradation visibility** — `CoherenceDegradedWarning`, `is_degraded`, `degradation_count`
-- **Expanded telemetry** — OTel: tokens saved, cache hit/miss counters, degraded-mode gauge;
-  LangSmith: per-run `token_reduction_pct`, `cache_hit_rate`, `tokens_saved_estimate`
-- **Shared-codebase example** — 4-agent code review pipeline with benchmark output
-- Production benchmarks on real LangGraph deployments (`benchmarks/langgraph_real/`)
-- Telemetry exporters: OpenTelemetry and LangSmith (`ccs.adapters.telemetry`)
-- Graceful degradation (`on_error="degrade"`)
-
-This is an alpha release. APIs may change before `v1.0`.
+`v0.4` released. See [releases](https://github.com/hipvlady/agent-coherence/releases) for
+full history. Alpha — APIs may change before `v1.0`.
 
 ## Paper
 
