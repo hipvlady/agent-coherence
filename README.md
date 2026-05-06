@@ -409,6 +409,12 @@ arXiv:[2603.15183](https://arxiv.org/abs/2603.15183)
 
 </details>
 
+Debugging multi-agent failures often comes down to which agent saw what state when.
+CCSStore tracks every read and write through MESI state transitions — the trace of
+who-saw-what is already in the system, even without a UI for it. If you've hit a
+stale-read bug in a multi-agent workflow, I'd like to hear about it —
+[open an issue](https://github.com/hipvlady/agent-coherence/issues/new).
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
