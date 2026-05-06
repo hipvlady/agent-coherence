@@ -10,7 +10,9 @@ from uuid import uuid4, UUID
 
 import pytest
 
-from ccs.coordinator.registry import ArtifactRegistry
+import re
+
+from ccs.coordinator.registry import ArtifactRegistry, CCS_STATE_LOG_SCHEMA_VERSION
 from ccs.coordinator.service import CoordinatorService
 from ccs.core.states import MESIState
 from ccs.core.types import Artifact, FetchRequest
@@ -20,8 +22,12 @@ from ccs.core.types import Artifact, FetchRequest
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _registry_with_log(log: list[dict], agent_names: dict | None = None) -> ArtifactRegistry:
-    return ArtifactRegistry(state_log=log.append, agent_names=agent_names)
+def _registry_with_log(
+    log: list[dict],
+    agent_names: dict | None = None,
+    instance_id: str = "test-instance-id",
+) -> ArtifactRegistry:
+    return ArtifactRegistry(state_log=log.append, agent_names=agent_names, instance_id=instance_id)
 
 
 def _register(svc: CoordinatorService, name: str = "artifact") -> Artifact:
@@ -155,7 +161,78 @@ def test_default_registry_has_no_log() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Unit 2: CoordinatorService trigger strings
+# Unit 2 (plan): sequence_number, instance_id, schema_version on state log
+# ---------------------------------------------------------------------------
+
+def test_first_state_log_entry_has_sequence_number_1() -> None:
+    log: list[dict] = []
+    reg = _registry_with_log(log)
+    artifact = Artifact(name="x", version=1)
+    reg.register_artifact(artifact, "")
+    reg.set_agent_state(artifact.id, uuid4(), MESIState.EXCLUSIVE, tick=1)
+    assert log[0]["sequence_number"] == 1
+
+
+def test_sequence_number_increments_per_entry() -> None:
+    log: list[dict] = []
+    reg = _registry_with_log(log)
+    artifact = Artifact(name="x", version=1)
+    reg.register_artifact(artifact, "")
+    agent_id = uuid4()
+    reg.set_agent_state(artifact.id, agent_id, MESIState.EXCLUSIVE, tick=1)
+    reg.set_agent_state(artifact.id, agent_id, MESIState.MODIFIED, tick=2)
+    assert log[0]["sequence_number"] == 1
+    assert log[1]["sequence_number"] == 2
+
+
+def test_all_entries_share_same_instance_id() -> None:
+    log: list[dict] = []
+    reg = _registry_with_log(log)
+    artifact = Artifact(name="x", version=1)
+    reg.register_artifact(artifact, "")
+    agent_id = uuid4()
+    reg.set_agent_state(artifact.id, agent_id, MESIState.EXCLUSIVE, tick=1)
+    reg.set_agent_state(artifact.id, agent_id, MESIState.MODIFIED, tick=2)
+    assert log[0]["instance_id"] == log[1]["instance_id"]
+
+
+def test_schema_version_on_every_state_log_entry() -> None:
+    log: list[dict] = []
+    reg = _registry_with_log(log)
+    artifact = Artifact(name="x", version=1)
+    reg.register_artifact(artifact, "")
+    reg.set_agent_state(artifact.id, uuid4(), MESIState.EXCLUSIVE, tick=1)
+    assert log[0]["schema_version"] == "ccs.state_log.v1"
+    assert log[0]["schema_version"] == CCS_STATE_LOG_SCHEMA_VERSION
+
+
+def test_artifact_registry_generates_uuid_when_no_instance_id() -> None:
+    reg = ArtifactRegistry()
+    uuid_pattern = re.compile(
+        r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    )
+    assert uuid_pattern.match(reg._instance_id)
+
+
+def test_two_registry_instances_have_distinct_instance_ids() -> None:
+    reg_a = ArtifactRegistry()
+    reg_b = ArtifactRegistry()
+    assert reg_a._instance_id != reg_b._instance_id
+
+
+def test_explicit_instance_id_is_preserved() -> None:
+    fixed_id = "test-instance-id-abc"
+    reg = ArtifactRegistry(instance_id=fixed_id)
+    log: list[dict] = []
+    reg._state_log = log.append
+    artifact = Artifact(name="x", version=1)
+    reg.register_artifact(artifact, "")
+    reg.set_agent_state(artifact.id, uuid4(), MESIState.EXCLUSIVE, tick=1)
+    assert log[0]["instance_id"] == fixed_id
+
+
+# ---------------------------------------------------------------------------
+# Unit 3 (plan): CoordinatorService trigger strings
 # ---------------------------------------------------------------------------
 
 def test_register_artifact_emits_register_trigger() -> None:
@@ -340,10 +417,10 @@ def test_four_agent_pipeline_produces_complete_log() -> None:
     # Tick 3: planner writes again (invalidates all three readers)
     _ccs_put(store, ("planner", "shared"), "plan", {"step": 2})
 
-    # All 8 required fields present in every entry
+    # All required fields present in every entry (subset check — new fields may be present too)
     required_fields = {"tick", "artifact_id", "agent_id", "agent_name", "from_state", "to_state", "trigger", "version"}
     for entry in log:
-        assert required_fields == entry.keys(), f"Missing fields: {required_fields - entry.keys()}"
+        assert required_fields <= entry.keys(), f"Missing fields: {required_fields - entry.keys()}"
 
     # No None values for non-nullable fields
     for entry in log:

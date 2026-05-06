@@ -37,11 +37,12 @@ class CoherenceAdapterCore:
         lease_ttl_ticks: int = 300,
         access_count_max_accesses: int = 100,
         event_bus: InMemoryEventBus | None = None,
-        state_log: Callable[[dict], None] | None = None,
+        state_log: Callable[[dict[str, Any]], None] | None = None,
+        instance_id: str | None = None,
         **strategy_kwargs: Any,
     ) -> None:
         self._agent_names: dict[UUID, str] = {}
-        self.registry = ArtifactRegistry(state_log=state_log, agent_names=self._agent_names)
+        self.registry = ArtifactRegistry(state_log=state_log, agent_names=self._agent_names, instance_id=instance_id)
         self.coordinator = CoordinatorService(self.registry)
         self.strategy: SyncStrategy = build_strategy(
             strategy_name,
