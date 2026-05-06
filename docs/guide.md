@@ -1,8 +1,10 @@
 # CCSStore User Guide
 
-Drop-in replacement for LangGraph's `InMemoryStore` that adds MESI cache
-coherence — shared artifacts are fetched once per agent and invalidated
-precisely when they change, instead of being rebroadcast on every step.
+When two agents share state, one of them is usually reading a stale copy.
+This guide shows how to drop in `agent-coherence` — surfacing those reads
+and serving fresh artifacts on demand, with a one-line import change.
+Below: installation, namespace convention, sync strategies, observability,
+telemetry, graceful degradation, examples, and the API reference.
 
 ---
 
@@ -21,6 +23,7 @@ precisely when they change, instead of being rebroadcast on every step.
 11. [Real-workload benchmarks](#real-workload-benchmarks)
 12. [Benchmarking your own workload](#benchmarking-your-own-workload)
 13. [API reference](#api-reference)
+14. [Low-level adapter API](#low-level-adapter-api)
 
 ---
 
@@ -209,6 +212,25 @@ store = CCSStore(strategy="lazy", state_log=safe_log)
 ```
 
 `state_log=None` (default) adds no overhead — the guard is a single `is not None` check.
+
+### Log validation
+
+Verify a materialized JSONL log for gaps and schema drift:
+
+```python
+from ccs.validation import validate_log, CCS_STATE_LOG_SCHEMA_VERSION
+
+gaps, mismatches = validate_log(
+    "transitions.jsonl",
+    schema_version=CCS_STATE_LOG_SCHEMA_VERSION,
+)
+# gaps: list of dropped-event positions; mismatches: list of schema version changes
+# returns ([], []) on a clean log
+```
+
+`validate_log` is stdlib-only and importable independently of the CCS runtime, so log
+consumers (audit pipelines, replay tools) can verify materialized logs without taking
+on the rest of the CCS dependency surface.
 
 ---
 
@@ -475,3 +497,28 @@ from ccs.adapters import (
     build_telemetry,
 )
 ```
+
+---
+
+## Low-level adapter API
+
+For CrewAI, AutoGen, or custom integrations, use the `before_node` / `commit_outputs`
+surface directly:
+
+```python
+from ccs.adapters.langgraph import LangGraphAdapter
+
+adapter = LangGraphAdapter(strategy_name="lazy")
+for name in ("planner", "researcher", "executor"):
+    adapter.register_agent(name)
+plan = adapter.register_artifact(name="plan.md", content="v1")
+
+context = adapter.before_node(agent_name="planner", artifact_ids=[plan.id], now_tick=1)
+adapter.commit_outputs(
+    agent_name="planner",
+    writes={plan.id: context[plan.id]["content"] + "\nStep 1"},
+    now_tick=2,
+)
+```
+
+Full example: [`examples/multi_agent_planning.py`](../examples/multi_agent_planning.py).
