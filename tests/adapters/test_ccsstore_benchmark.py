@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import pytest
 from unittest.mock import patch
+
+pytest.importorskip("langgraph.store.base")
+
 from langgraph.store.base import GetOp, PutOp
 
 from ccs.adapters.ccsstore import CCSStore

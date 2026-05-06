@@ -22,6 +22,7 @@ _LAYER_BY_NAMESPACE = {
     "output": "interface",
     "cli": "interface",
     "adapters": "interface",
+    "validation": "interface",
 }
 
 _ALLOWED_LAYER_IMPORTS = {

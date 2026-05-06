@@ -70,7 +70,15 @@ def patched_benchmarks(monkeypatch):
     """Patch the three bench modules so run() returns _FAKE_RESULTS without LangGraph."""
     mod = _import_run_benchmarks()
 
-    for i, bench_mod in enumerate(mod._BENCHMARKS):
+    benchmark_modules = []
+    for i, result in enumerate(_FAKE_RESULTS):
+        bench_mod = MagicMock()
+        bench_mod.run.return_value = result
+        benchmark_modules.append(bench_mod)
+
+    monkeypatch.setattr(mod, "_load_benchmarks", lambda: benchmark_modules)
+
+    for i, bench_mod in enumerate(benchmark_modules):
         result = _FAKE_RESULTS[i]
         monkeypatch.setattr(bench_mod, "run", lambda r=result: r)
 

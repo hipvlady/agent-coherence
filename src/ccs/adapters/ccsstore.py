@@ -27,7 +27,7 @@ from langgraph.store.base import (
 )
 
 from ccs.adapters.base import CoherenceAdapterCore
-from ccs.adapters.events import StoreMetricEvent  # re-exported for public API compatibility
+from ccs.adapters.events import CCS_METRIC_SCHEMA_VERSION, StoreMetricEvent  # re-exported for public API compatibility
 from ccs.adapters.telemetry import TelemetryExporter, build_telemetry
 from ccs.core.exceptions import CoherenceError
 from ccs.core.states import MESIState
@@ -62,13 +62,16 @@ class CCSStore(BaseStore):
         telemetry: str | TelemetryExporter | None = None,
         on_error: str = "strict",
         benchmark: bool = False,
+        state_log: Callable[[dict[str, Any]], None] | None = None,
         **strategy_kwargs: Any,
     ) -> None:
         if on_error not in ("strict", "degrade"):
             raise ValueError(f"on_error must be 'strict' or 'degrade'; got {on_error!r}")
         if not isinstance(benchmark, bool):
             raise TypeError(f"benchmark must be a bool; got {type(benchmark).__name__!r}")
-        self.core = CoherenceAdapterCore(strategy_name=strategy, **strategy_kwargs)
+        self._instance_id = str(uuid.uuid4())
+        self._metric_seq: int = 0
+        self.core = CoherenceAdapterCore(strategy_name=strategy, state_log=state_log, instance_id=self._instance_id, **strategy_kwargs)
         self._on_metric = on_metric
         self._telemetry: TelemetryExporter = build_telemetry(telemetry)
         self._on_error = on_error
@@ -174,22 +177,18 @@ class CCSStore(BaseStore):
                 self._degradation_count += 1
 
         tokens = 1 if cache_hit else self._estimate_tokens(value)
+        # Cache hit: no content was fetched from the coordinator, so transmission cost is 0.
+        # We emit max(1, 0) = 1 to acknowledge the access without counting redundant transfer.
         tokens_saved = max(0, self._estimate_tokens(value) - 1) if cache_hit else 0
-        event = StoreMetricEvent(
+        self._emit_metric(
             operation="degraded" if degraded else "get",
             namespace=namespace,
             key=key,
             agent_name=agent_name,
-            # Cache hit: no content was fetched from the coordinator, so transmission cost is 0.
-            # We emit max(1, 0) = 1 to acknowledge the access without counting redundant transfer.
             tokens_consumed=tokens,
             cache_hit=cache_hit,
-            tick=tick,
             tokens_saved_estimate=tokens_saved,
         )
-        if self._on_metric is not None:
-            self._on_metric(event)
-        self._telemetry.on_event(event)
 
         if self._bm_baseline is not None:
             self._bm_baseline += self._estimate_tokens(value)
@@ -251,18 +250,14 @@ class CCSStore(BaseStore):
             self._namespace_index[full_ns] = set()
         self._namespace_index[full_ns].add(key)
 
-        event = StoreMetricEvent(
+        self._emit_metric(
             operation="degraded" if degraded else "put",
             namespace=namespace,
             key=key,
             agent_name=agent_name,
             tokens_consumed=self._estimate_tokens(value),
             cache_hit=False,
-            tick=tick,
         )
-        if self._on_metric is not None:
-            self._on_metric(event)
-        self._telemetry.on_event(event)
 
     def _apply_delete(self, namespace: tuple[str, ...], key: str, tick: int) -> None:
         if len(namespace) < 2:
@@ -343,18 +338,14 @@ class CCSStore(BaseStore):
                     )
                 )
 
-                search_event = StoreMetricEvent(
+                self._emit_metric(
                     operation="search.hit",
                     namespace=full_ns,
                     key=key,
                     agent_name=full_ns[0] if full_ns else "",
                     tokens_consumed=self._estimate_tokens(value),
                     cache_hit=False,
-                    tick=tick,
                 )
-                if self._on_metric is not None:
-                    self._on_metric(search_event)
-                self._telemetry.on_event(search_event)
 
         return results[op.offset : op.offset + op.limit]
 
@@ -428,6 +419,48 @@ class CCSStore(BaseStore):
         print(f"  Tokens saved:                {saved:>8}")
         print(f"  Token reduction:             {reduction:>7.1f}%")
         print(f"  Cache hit rate:              {hit_rate:>7.1%}  ({ops} get ops)")
+
+    # ------------------------------------------------------------------
+    # Metric emission helper (must only be called inside self._lock)
+    # ------------------------------------------------------------------
+
+    def _emit_metric(
+        self,
+        *,
+        operation: str,
+        namespace: tuple[str, ...],
+        key: str,
+        agent_name: str,
+        tokens_consumed: int,
+        cache_hit: bool,
+        tokens_saved_estimate: int = 0,
+        tick: int | None = None,
+    ) -> None:
+        # All callers are inside batch() which holds self._lock. Do not acquire
+        # the lock here — a nested acquire would deadlock. Any future emission
+        # site added outside the lock would silently break gap detection.
+        self._metric_seq += 1
+        event = StoreMetricEvent(
+            operation=operation,
+            namespace=namespace,
+            key=key,
+            agent_name=agent_name,
+            tokens_consumed=tokens_consumed,
+            cache_hit=cache_hit,
+            tick=tick if tick is not None else self._tick,
+            tokens_saved_estimate=tokens_saved_estimate,
+            sequence_number=self._metric_seq,
+            instance_id=self._instance_id,
+            schema_version=CCS_METRIC_SCHEMA_VERSION,
+        )
+        if event.sequence_number < 1:
+            raise RuntimeError(
+                f"_emit_metric produced invalid sequence_number={event.sequence_number!r}; "
+                "this is a bug in CCSStore — was _emit_metric called outside self._lock?"
+            )
+        if self._on_metric is not None:
+            self._on_metric(event)
+        self._telemetry.on_event(event)
 
     # ------------------------------------------------------------------
     # Registration helpers

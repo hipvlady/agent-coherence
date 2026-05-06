@@ -13,13 +13,14 @@ precisely when they change, instead of being rebroadcast on every step.
 3. [Namespace convention](#namespace-convention)
 4. [Strategies](#strategies)
 5. [Observability](#observability)
-6. [Inline benchmark mode](#inline-benchmark-mode)
-7. [Telemetry](#telemetry)
-8. [Graceful degradation](#graceful-degradation)
-9. [Examples](#examples)
-10. [Real-workload benchmarks](#real-workload-benchmarks)
-11. [Benchmarking your own workload](#benchmarking-your-own-workload)
-12. [API reference](#api-reference)
+6. [State transitions log](#state-transitions-log)
+7. [Inline benchmark mode](#inline-benchmark-mode)
+8. [Telemetry](#telemetry)
+9. [Graceful degradation](#graceful-degradation)
+10. [Examples](#examples)
+11. [Real-workload benchmarks](#real-workload-benchmarks)
+12. [Benchmarking your own workload](#benchmarking-your-own-workload)
+13. [API reference](#api-reference)
 
 ---
 
@@ -142,6 +143,72 @@ saved  = sum(e.tokens_consumed for e in misses) - len(hits)  # rough savings
 
 Token estimation: `max(1, len(json.dumps(value)) // 4)`. Override by including
 `"__ccs_size_tokens__": N` in your artifact value.
+
+---
+
+## State transitions log
+
+Pass `state_log` to receive a structured dict for every stable MESI state transition.
+Intended for external tools — debuggers, visualizers, audit pipelines — that need to
+correlate agent behavior with coherence state changes without coupling to CCS internals.
+
+```python
+import json
+
+log = []
+store = CCSStore(strategy="lazy", state_log=log.append)
+
+# ... run your graph ...
+
+# Write JSONL
+with open("transitions.jsonl", "w") as f:
+    for entry in log:
+        f.write(json.dumps(entry) + "\n")
+```
+
+### Log entry schema
+
+Each entry is a flat `dict` with exactly these eight keys:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tick` | `int` | Monotonic operation counter within this `CCSStore` session |
+| `artifact_id` | `str` | UUID of the artifact whose per-agent state changed |
+| `agent_id` | `str` | UUID of the agent whose state changed |
+| `agent_name` | `str \| None` | Agent display name (resolved from `namespace[0]`); `None` for low-level registry callers |
+| `from_state` | `str` | Previous state: `"MODIFIED"`, `"EXCLUSIVE"`, `"SHARED"`, or `"INVALID"` |
+| `to_state` | `str` | New state after the transition |
+| `trigger` | `str` | Coordinator operation that caused the transition (see table below) |
+| `version` | `int` | Artifact version number at the moment of the transition |
+
+### Trigger vocabulary
+
+| `trigger` | Fires when |
+|-----------|-----------|
+| `"register"` | Initial artifact registration; registering agent receives EXCLUSIVE |
+| `"fetch"` | Fetch grant; agent transitions to SHARED or EXCLUSIVE |
+| `"write"` | Write request; peers are invalidated (→ INVALID), requester receives EXCLUSIVE |
+| `"commit"` | Write commit; peers are invalidated (→ INVALID), committer transitions to MODIFIED |
+| `"invalidate"` | Explicit invalidation signal; agent transitions to INVALID |
+| `"timeout"` | Transient state timeout; agent force-invalidated (→ INVALID) |
+
+### Error handling
+
+The callback is called synchronously on the critical path. An exception in `state_log`
+propagates out of the coordinator operation and may leave the log incomplete for that
+batch. Provide a callback that catches its own exceptions for production use:
+
+```python
+def safe_log(entry: dict) -> None:
+    try:
+        emit_to_pipeline(entry)
+    except Exception:
+        logger.exception("state_log callback failed")
+
+store = CCSStore(strategy="lazy", state_log=safe_log)
+```
+
+`state_log=None` (default) adds no overhead — the guard is a single `is not None` check.
 
 ---
 
@@ -383,15 +450,16 @@ inline benchmarking without the CLI, see [Inline benchmark mode](#inline-benchma
 
 ## API reference
 
-### `CCSStore(strategy, benchmark, on_metric, telemetry, on_error, **strategy_kwargs)`
+### `CCSStore(strategy, benchmark, on_metric, telemetry, on_error, state_log, **strategy_kwargs)`
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `strategy` | `str` | `"lazy"` | Synchronization strategy: `"lazy"`, `"eager"`, `"lease"`, `"access_count"`, `"broadcast"` |
 | `benchmark` | `bool` | `False` | Enable inline token-savings measurement; access results via `benchmark_summary()` / `print_benchmark_summary()` |
-| `on_metric` | `Callable[[StoreMetricEvent], None] \| None` | `None` | Callback fired after every operation |
+| `on_metric` | `Callable[[StoreMetricEvent], None] \| None` | `None` | Callback fired after every operation with per-op metrics |
 | `telemetry` | `str \| TelemetryExporter \| None` | `None` | `"opentelemetry"`, `"langsmith"`, a `TelemetryExporter` instance, or `None` |
 | `on_error` | `str` | `"strict"` | `"strict"` to propagate `CoherenceError`; `"degrade"` to fall back silently |
+| `state_log` | `Callable[[dict], None] \| None` | `None` | Callback fired on every stable MESI state transition; see [State transitions log](#state-transitions-log) |
 | `**strategy_kwargs` | `Any` | — | Forwarded to the strategy constructor (`lease_ticks`, `threshold`, etc.) |
 
 ### Public imports

@@ -48,8 +48,7 @@ def test_happy_path_returns_zero_and_prints_summary(tmp_path):
     mock_graph = MagicMock()
     mock_store._mock_graph = mock_graph
 
-    with patch.object(bm, "CCSStore", return_value=mock_store, create=True), \
-         patch("ccs.adapters.ccsstore.CCSStore", mock_store, create=True):
+    with patch.object(bm, "CCSStore", return_value=mock_store, create=True):
         # Patch the import inside main()
         with patch.dict("sys.modules", {"ccs.adapters.ccsstore": MagicMock(CCSStore=lambda **kw: mock_store)}):
             result = bm.main(["--graph", f"{factory_path}:build_graph"])
