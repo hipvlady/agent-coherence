@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-coherence"
-version = "0.3.0"
+dynamic = ["version"]
 description = "Token optimization layer for multi-agent LangGraph systems — cut shared-artifact token costs via MESI cache coherence, one import change"
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -43,6 +43,9 @@ pythonpath = ["src"]
 [tool.setuptools]
 package-dir = { "" = "src" }
 license-files = []
+
+[tool.setuptools.dynamic]
+version = { attr = "ccs.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
