@@ -29,7 +29,9 @@ from langgraph.store.base import (
 from ccs.adapters.base import CoherenceAdapterCore
 from ccs.adapters.events import CCS_METRIC_SCHEMA_VERSION, StoreMetricEvent  # re-exported for public API compatibility
 from ccs.adapters.telemetry import TelemetryExporter, build_telemetry
+from ccs.agent.runtime import CCS_CONTENT_AUDIT_LOG_SCHEMA_VERSION
 from ccs.core.exceptions import CoherenceError
+from ccs.core.hashing import compute_content_hash
 from ccs.core.states import MESIState
 from ccs.core.types import Artifact
 
@@ -63,6 +65,7 @@ class CCSStore(BaseStore):
         on_error: str = "strict",
         benchmark: bool = False,
         state_log: Callable[[dict[str, Any]], None] | None = None,
+        content_audit_log: Callable[[dict[str, Any]], None] | None = None,
         **strategy_kwargs: Any,
     ) -> None:
         if on_error not in ("strict", "degrade"):
@@ -71,7 +74,17 @@ class CCSStore(BaseStore):
             raise TypeError(f"benchmark must be a bool; got {type(benchmark).__name__!r}")
         self._instance_id = str(uuid.uuid4())
         self._metric_seq: int = 0
-        self.core = CoherenceAdapterCore(strategy_name=strategy, state_log=state_log, instance_id=self._instance_id, **strategy_kwargs)
+        self._content_audit_log = content_audit_log
+        self._audit_seq: list[int] = [0]
+        self.core = CoherenceAdapterCore(
+            strategy_name=strategy,
+            state_log=state_log,
+            instance_id=self._instance_id,
+            content_audit_log=content_audit_log,
+            audit_seq=self._audit_seq,
+            retain_versions=content_audit_log is not None,
+            **strategy_kwargs,
+        )
         self._on_metric = on_metric
         self._telemetry: TelemetryExporter = build_telemetry(telemetry)
         self._on_error = on_error
@@ -346,6 +359,25 @@ class CCSStore(BaseStore):
                     tokens_consumed=self._estimate_tokens(value),
                     cache_hit=False,
                 )
+
+                if self._content_audit_log is not None:
+                    artifact_meta = self.core.registry.get_artifact(artifact_id)
+                    record_version = artifact_meta.version if artifact_meta else None
+                    content_hash = compute_content_hash(raw) if raw is not None else None
+                    self._audit_seq[0] += 1
+                    self._content_audit_log({
+                        "tick": tick,
+                        "agent_id": None,
+                        "agent_name": None,
+                        "artifact_id": str(artifact_id),
+                        "version": record_version,
+                        "content_hash": content_hash,
+                        "source": "search",
+                        "outcome": "error",
+                        "sequence_number": self._audit_seq[0],
+                        "instance_id": self._instance_id,
+                        "schema_version": CCS_CONTENT_AUDIT_LOG_SCHEMA_VERSION,
+                    })
 
         return results[op.offset : op.offset + op.limit]
 
