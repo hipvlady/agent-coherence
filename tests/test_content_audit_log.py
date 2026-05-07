@@ -469,3 +469,181 @@ class TestVersionRetention:
         from ccs.coordinator.registry import ArtifactRecord
         record = ArtifactRecord(artifact=Artifact(name="x", version=1), content="c")
         assert record.version_history == {}
+
+
+# ---------------------------------------------------------------------------
+# Unit 9: End-to-end integration test (core-level, no CCSStore/langgraph)
+# ---------------------------------------------------------------------------
+
+
+class TestEndToEndCoreAuditPipeline:
+    """Full audit pipeline at the runtime level: fetch, cache_hit, write, broadcast."""
+
+    R1_FIELDS = {
+        "tick", "agent_id", "agent_name", "artifact_id", "version",
+        "content_hash", "source", "outcome", "sequence_number",
+        "instance_id", "schema_version",
+    }
+
+    def test_four_sources_via_runtime(self):
+        audit: list[dict] = []
+        state: list[dict] = []
+        agent_a = uuid4()
+        agent_b = uuid4()
+        audit_seq: list[int] = [0]
+        instance_id = "e2e-test"
+        agent_names = {agent_a: "agent-a", agent_b: "agent-b"}
+
+        reg = ArtifactRegistry(
+            state_log=state.append,
+            agent_names=agent_names,
+            instance_id=instance_id,
+            retain_versions=True,
+        )
+        coord = CoordinatorService(reg)
+
+        rt_a = AgentRuntime(
+            agent_id=agent_a, coordinator=coord,
+            strategy=LazyStrategy(),
+            content_audit_log=audit.append, audit_seq=audit_seq,
+            agent_name="agent-a", instance_id=instance_id,
+        )
+        rt_b = AgentRuntime(
+            agent_id=agent_b, coordinator=coord,
+            strategy=LazyStrategy(),
+            content_audit_log=audit.append, audit_seq=audit_seq,
+            agent_name="agent-b", instance_id=instance_id,
+        )
+
+        artifact = coord.register_artifact(name="doc", content="initial")
+
+        # 1. agent-a writes → source="write"
+        rt_a.write(artifact.id, content="v1-content", now_tick=1)
+        # 2. agent-b reads (fetch) → source="fetch"
+        rt_b.read(artifact.id, now_tick=2)
+        # 3. agent-b reads again (cache hit) → source="cache_hit"
+        rt_b.read(artifact.id, now_tick=3)
+        # 4. agent-a writes v2 → source="write", then broadcast to agent-b
+        updated, signals = rt_a.write(artifact.id, content="v2-content", now_tick=4)
+        for sig in signals:
+            rt_b.handle_update(
+                artifact_id=artifact.id, version=updated.version,
+                content="v2-content", now_tick=4,
+            )
+
+        sources = {e["source"] for e in audit}
+        assert {"write", "fetch", "cache_hit", "broadcast"} <= sources
+
+    def test_all_records_have_r1_fields(self):
+        audit: list[dict] = []
+        audit_seq: list[int] = [0]
+        reg = ArtifactRegistry()
+        coord = CoordinatorService(reg)
+        rt = AgentRuntime(
+            agent_id=uuid4(), coordinator=coord, strategy=LazyStrategy(),
+            content_audit_log=audit.append, audit_seq=audit_seq,
+            agent_name="test", instance_id="i",
+        )
+        artifact = coord.register_artifact(name="d", content="c")
+        rt.write(artifact.id, content="new", now_tick=1)
+        rt.read(artifact.id, now_tick=2)
+
+        for entry in audit:
+            assert self.R1_FIELDS <= set(entry.keys()), f"missing fields: {self.R1_FIELDS - set(entry.keys())}"
+
+    def test_sequence_numbers_gap_free_across_agents(self):
+        audit: list[dict] = []
+        audit_seq: list[int] = [0]
+        reg = ArtifactRegistry()
+        coord = CoordinatorService(reg)
+        rt_a = AgentRuntime(
+            agent_id=uuid4(), coordinator=coord, strategy=LazyStrategy(),
+            content_audit_log=audit.append, audit_seq=audit_seq,
+            agent_name="a", instance_id="i",
+        )
+        rt_b = AgentRuntime(
+            agent_id=uuid4(), coordinator=coord, strategy=LazyStrategy(),
+            content_audit_log=audit.append, audit_seq=audit_seq,
+            agent_name="b", instance_id="i",
+        )
+        artifact = coord.register_artifact(name="d", content="c")
+        rt_a.write(artifact.id, content="x", now_tick=1)
+        rt_b.read(artifact.id, now_tick=2)
+        rt_b.read(artifact.id, now_tick=3)
+
+        seq_nums = [e["sequence_number"] for e in audit]
+        for i in range(1, len(seq_nums)):
+            assert seq_nums[i] == seq_nums[i - 1] + 1
+
+    def test_content_hash_cross_validates_with_state_log(self):
+        audit: list[dict] = []
+        state: list[dict] = []
+        agent_id = uuid4()
+        audit_seq: list[int] = [0]
+        reg = ArtifactRegistry(
+            state_log=state.append,
+            agent_names={agent_id: "writer"},
+            instance_id="xval",
+        )
+        coord = CoordinatorService(reg)
+        rt = AgentRuntime(
+            agent_id=agent_id, coordinator=coord, strategy=LazyStrategy(),
+            content_audit_log=audit.append, audit_seq=audit_seq,
+            agent_name="writer", instance_id="xval",
+        )
+        artifact = coord.register_artifact(name="d", content="c")
+        rt.write(artifact.id, content="payload", now_tick=1)
+
+        write_audit = [e for e in audit if e["source"] == "write"]
+        commit_state = [e for e in state if e["trigger"] == "commit"]
+        assert len(write_audit) >= 1
+        assert len(commit_state) >= 1
+        assert write_audit[0]["content_hash"] == commit_state[0]["content_hash"]
+
+    def test_all_records_json_serializable(self):
+        import json as _json
+        audit: list[dict] = []
+        audit_seq: list[int] = [0]
+        reg = ArtifactRegistry()
+        coord = CoordinatorService(reg)
+        rt = AgentRuntime(
+            agent_id=uuid4(), coordinator=coord, strategy=LazyStrategy(),
+            content_audit_log=audit.append, audit_seq=audit_seq,
+            agent_name="t", instance_id="i",
+        )
+        artifact = coord.register_artifact(name="d", content="c")
+        rt.write(artifact.id, content="new", now_tick=1)
+        rt.read(artifact.id, now_tick=2)
+
+        for entry in audit:
+            _json.dumps(entry)
+
+    def test_version_retention_cross_validates(self):
+        audit: list[dict] = []
+        audit_seq: list[int] = [0]
+        reg = ArtifactRegistry(retain_versions=True)
+        coord = CoordinatorService(reg)
+        rt = AgentRuntime(
+            agent_id=uuid4(), coordinator=coord, strategy=LazyStrategy(),
+            content_audit_log=audit.append, audit_seq=audit_seq,
+            agent_name="t", instance_id="i",
+        )
+        artifact = coord.register_artifact(name="d", content="initial")
+        rt.write(artifact.id, content="v1", now_tick=1)
+        rt.write(artifact.id, content="v2", now_tick=2)
+
+        v1_content = reg.get_content_at_version(artifact.id, 2)
+        v2_content = reg.get_content_at_version(artifact.id, 3)
+        assert v1_content == "v1"
+        assert v2_content == "v2"
+
+    def test_no_audit_without_callback(self):
+        """AgentRuntime without content_audit_log emits nothing."""
+        reg = ArtifactRegistry()
+        coord = CoordinatorService(reg)
+        rt = AgentRuntime(
+            agent_id=uuid4(), coordinator=coord, strategy=LazyStrategy(),
+        )
+        artifact = coord.register_artifact(name="d", content="c")
+        rt.write(artifact.id, content="new", now_tick=1)
+        rt.read(artifact.id, now_tick=2)

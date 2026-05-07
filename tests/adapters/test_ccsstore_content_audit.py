@@ -233,6 +233,152 @@ class TestVersionRetentionGating:
 
 
 # ---------------------------------------------------------------------------
+# Unit 9: End-to-end integration test
+# ---------------------------------------------------------------------------
+
+
+class TestEndToEndAuditPipeline:
+    """Full audit pipeline: put, get (fetch + cache hit), broadcast, search."""
+
+    R1_FIELDS = {
+        "tick", "agent_id", "agent_name", "artifact_id", "version",
+        "content_hash", "source", "outcome", "sequence_number",
+        "instance_id", "schema_version",
+    }
+
+    def test_all_five_sources_appear(self):
+        audit: list[dict] = []
+        state: list[dict] = []
+        store = CCSStore(
+            strategy="broadcast",
+            content_audit_log=audit.append,
+            state_log=state.append,
+        )
+
+        # 1. planner puts → source="write"
+        store.batch([_put("planner", "shared", "doc", {"plan": "v1"})])
+        # 2. reviewer gets (fetch) → source="fetch"
+        store.batch([_get("reviewer", "shared", "doc")])
+        # 3. reviewer gets again (cache hit) → source="cache_hit"
+        store.batch([_get("reviewer", "shared", "doc")])
+        # 4. planner puts v2 → broadcast to reviewer → source="broadcast" + "write"
+        store.batch([_put("planner", "shared", "doc", {"plan": "v2"})])
+        # 5. search → source="search"
+        store.batch([_search("shared")])
+
+        sources = {e["source"] for e in audit}
+        assert sources == {"write", "fetch", "cache_hit", "broadcast", "search"}
+
+    def test_all_records_have_r1_fields(self):
+        audit: list[dict] = []
+        store = CCSStore(strategy="broadcast", content_audit_log=audit.append)
+        store.batch([_put("planner", "shared", "doc", {"x": 1})])
+        store.batch([_get("reviewer", "shared", "doc")])
+        store.batch([_search("shared")])
+
+        for entry in audit:
+            assert self.R1_FIELDS <= set(entry.keys()), f"missing fields in {entry}"
+
+    def test_sequence_numbers_gap_free(self):
+        audit: list[dict] = []
+        store = CCSStore(strategy="broadcast", content_audit_log=audit.append)
+        store.batch([_put("planner", "shared", "doc", {"x": 1})])
+        store.batch([_get("reviewer", "shared", "doc")])
+        store.batch([_get("reviewer", "shared", "doc")])
+        store.batch([_put("planner", "shared", "doc", {"x": 2})])
+        store.batch([_search("shared")])
+
+        seq_nums = [e["sequence_number"] for e in audit]
+        for i in range(1, len(seq_nums)):
+            assert seq_nums[i] == seq_nums[i - 1] + 1, (
+                f"gap at index {i}: {seq_nums[i - 1]} → {seq_nums[i]}"
+            )
+
+    def test_instance_id_matches_state_log(self):
+        audit: list[dict] = []
+        state: list[dict] = []
+        store = CCSStore(
+            strategy="broadcast",
+            content_audit_log=audit.append,
+            state_log=state.append,
+        )
+        store.batch([_put("planner", "shared", "doc", {"x": 1})])
+
+        audit_ids = {e["instance_id"] for e in audit}
+        state_ids = {e["instance_id"] for e in state}
+        assert len(audit_ids) == 1
+        assert audit_ids == state_ids
+
+    def test_content_hash_cross_validation(self):
+        """content_hash on write audit matches content_hash on state log commit."""
+        audit: list[dict] = []
+        state: list[dict] = []
+        store = CCSStore(
+            strategy="broadcast",
+            content_audit_log=audit.append,
+            state_log=state.append,
+        )
+        store.batch([_put("planner", "shared", "doc", {"x": 1})])
+
+        write_entries = [e for e in audit if e["source"] == "write"]
+        commit_entries = [e for e in state if e["trigger"] == "commit"]
+        assert len(write_entries) >= 1
+        assert len(commit_entries) >= 1
+        assert write_entries[0]["content_hash"] == commit_entries[0]["content_hash"]
+
+    def test_version_retention_end_to_end(self):
+        """R11: version history available when audit is enabled."""
+        audit: list[dict] = []
+        store = CCSStore(strategy="broadcast", content_audit_log=audit.append)
+        store.batch([_put("planner", "shared", "doc", {"plan": "v1"})])
+        store.batch([_put("planner", "shared", "doc", {"plan": "v2"})])
+
+        for (_scope, _key), aid in store._artifact_map.items():
+            v1 = store.core.registry.get_content_at_version(aid, 2)
+            v2 = store.core.registry.get_content_at_version(aid, 3)
+            assert v1 is not None
+            assert v2 is not None
+            assert v1 != v2
+
+    def test_version_retention_negative_coupling(self):
+        """version_history is empty when content_audit_log is not set."""
+        store = CCSStore()
+        store.batch([_put("planner", "shared", "doc", {"plan": "v1"})])
+        store.batch([_put("planner", "shared", "doc", {"plan": "v2"})])
+
+        for (_scope, _key), aid in store._artifact_map.items():
+            v1 = store.core.registry.get_content_at_version(aid, 2)
+            assert v1 is None
+
+    def test_all_records_json_serializable(self):
+        import json as _json
+        audit: list[dict] = []
+        store = CCSStore(strategy="broadcast", content_audit_log=audit.append)
+        store.batch([_put("planner", "shared", "doc", {"x": 1})])
+        store.batch([_get("reviewer", "shared", "doc")])
+        store.batch([_search("shared")])
+
+        for entry in audit:
+            _json.dumps(entry)
+
+    def test_normal_deliveries_have_content_outcome(self):
+        """outcome='content' for all non-search deliveries with committed content."""
+        audit: list[dict] = []
+        store = CCSStore(strategy="broadcast", content_audit_log=audit.append)
+        store.batch([_put("planner", "shared", "doc", {"x": 1})])
+        store.batch([_get("reviewer", "shared", "doc")])
+        store.batch([_get("reviewer", "shared", "doc")])
+
+        non_search = [e for e in audit if e["source"] != "search"]
+        for entry in non_search:
+            assert entry["outcome"] == "content", (
+                f"expected outcome='content' for source={entry['source']}, got {entry['outcome']}"
+            )
+            assert entry["version"] is not None
+            assert entry["content_hash"] is not None
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
