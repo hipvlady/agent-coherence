@@ -363,19 +363,23 @@ class CCSStore(BaseStore):
                     record_version = artifact_meta.version if artifact_meta else None
                     content_hash = compute_content_hash(raw) if raw is not None else None
                     self._audit_seq[0] += 1
-                    self._content_audit_log({
-                        "tick": tick,
-                        "agent_id": None,
-                        "agent_name": None,
-                        "artifact_id": str(artifact_id),
-                        "version": record_version,
-                        "content_hash": content_hash,
-                        "source": "search",
-                        "outcome": "error",
-                        "sequence_number": self._audit_seq[0],
-                        "instance_id": self._instance_id,
-                        "schema_version": CCS_CONTENT_AUDIT_LOG_SCHEMA_VERSION,
-                    })
+                    try:
+                        self._content_audit_log({
+                            "tick": tick,
+                            "agent_id": None,
+                            "agent_name": None,
+                            "artifact_id": str(artifact_id),
+                            "version": record_version,
+                            "content_hash": content_hash,
+                            "source": "search",
+                            "outcome": "error",
+                            "sequence_number": self._audit_seq[0],
+                            "instance_id": self._instance_id,
+                            "schema_version": CCS_CONTENT_AUDIT_LOG_SCHEMA_VERSION,
+                        })
+                    except Exception:
+                        self._audit_seq[0] -= 1
+                        raise
 
         return results[op.offset : op.offset + op.limit]
 

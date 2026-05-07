@@ -272,60 +272,6 @@ class TestRecordContentView:
         assert roundtrip == log[0]
 
 
-class TestRecordSearchView:
-    def test_emits_source_search(self):
-        log: list[dict] = []
-        rt = _audit_runtime(log)
-        rt._record_search_view(
-            artifact_id=ARTIFACT_ID, version=1, content="hello", now_tick=1,
-        )
-        assert len(log) == 1
-        assert log[0]["source"] == "search"
-        assert set(log[0].keys()) == R1_FIELDS
-
-    def test_does_not_update_content_by_artifact(self):
-        log: list[dict] = []
-        rt = _audit_runtime(log)
-        rt._record_search_view(
-            artifact_id=ARTIFACT_ID, version=1, content="hello", now_tick=1,
-        )
-        assert ARTIFACT_ID not in rt._content_by_artifact
-
-    def test_shares_sequence_counter(self):
-        log: list[dict] = []
-        seq = [0]
-        rt = _audit_runtime(log, audit_seq=seq)
-        rt._record_content_view(
-            artifact_id=ARTIFACT_ID, version=1, content="a",
-            source="fetch", now_tick=1,
-        )
-        rt._record_search_view(
-            artifact_id=ARTIFACT_ID, version=1, content="b", now_tick=2,
-        )
-        assert log[0]["sequence_number"] == 1
-        assert log[1]["sequence_number"] == 2
-
-    def test_no_emission_when_callback_none(self):
-        rt = AgentRuntime(
-            agent_id=AGENT_ID,
-            coordinator=CoordinatorService(ArtifactRegistry()),
-            strategy=LazyStrategy(),
-        )
-        rt._record_search_view(
-            artifact_id=ARTIFACT_ID, version=1, content="x", now_tick=1,
-        )
-        # No exception, no side effects
-
-    def test_json_serializable(self):
-        log: list[dict] = []
-        rt = _audit_runtime(log)
-        rt._record_search_view(
-            artifact_id=ARTIFACT_ID, version=1, content="hello", now_tick=1,
-        )
-        roundtrip = json.loads(json.dumps(log[0]))
-        assert roundtrip == log[0]
-
-
 # ---------------------------------------------------------------------------
 # Unit 3: Wired delivery paths
 # ---------------------------------------------------------------------------

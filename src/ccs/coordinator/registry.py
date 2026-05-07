@@ -93,7 +93,10 @@ class ArtifactRegistry:
 
     def get_content_at_version(self, artifact_id: UUID, version: int) -> str | None:
         """Return content for a specific version, if retained."""
-        return self._records[artifact_id].version_history.get(version)
+        record = self._records.get(artifact_id)
+        if record is None:
+            return None
+        return record.version_history.get(version)
 
     def get_state_map(self, artifact_id: UUID) -> dict[UUID, MESIState]:
         """Return copy of per-agent MESI states for an artifact."""

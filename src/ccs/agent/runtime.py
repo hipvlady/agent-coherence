@@ -77,6 +77,14 @@ class AgentRuntime:
         size_tokens: int | None = None,
     ) -> tuple[Artifact, list[InvalidationSignal]]:
         """Write new artifact content through coordinator protocol."""
+        if content_hash is not None:
+            computed = compute_content_hash(content)
+            if content_hash != computed:
+                raise ValueError(
+                    f"content_hash mismatch: caller provided {content_hash!r}, "
+                    f"computed {computed!r}"
+                )
+
         entry = self.cache.get(artifact_id)
         if entry is None or self.strategy.requires_refresh(entry, now_tick=now_tick):
             self._fetch(artifact_id, now_tick=now_tick)
@@ -103,18 +111,13 @@ class AgentRuntime:
                 now_tick=now_tick,
             ),
         )
-        computed_hash = self._record_content_view(
+        self._record_content_view(
             artifact_id=artifact_id,
             version=updated.version,
             content=content,
             source="write",
             now_tick=now_tick,
         )
-        if content_hash is not None and computed_hash is not None and content_hash != computed_hash:
-            raise ValueError(
-                f"content_hash mismatch: caller provided {content_hash!r}, "
-                f"computed {computed_hash!r}"
-            )
         return updated, [*write_signals, *commit_signals]
 
     def handle_invalidation(self, signal: InvalidationSignal) -> None:
@@ -248,45 +251,3 @@ class AgentRuntime:
 
         return content_hash
 
-    def _record_search_view(
-        self,
-        *,
-        artifact_id: UUID,
-        version: int | None,
-        content: str | None,
-        now_tick: int,
-    ) -> None:
-        """Record a search content delivery without mutating local state."""
-        if content is None:
-            outcome = "error"
-            record_version = None
-            content_hash = None
-        elif version is None or version == 0:
-            outcome = "empty"
-            record_version = None
-            content_hash = None
-        else:
-            outcome = "content"
-            record_version = version
-            content_hash = compute_content_hash(content)
-
-        if self._content_audit_log is not None:
-            self._audit_seq[0] += 1
-            entry: dict[str, Any] = {
-                "tick": now_tick,
-                "agent_id": str(self.agent_id),
-                "agent_name": self._agent_name,
-                "artifact_id": str(artifact_id),
-                "version": record_version,
-                "content_hash": content_hash,
-                "source": "search",
-                "outcome": outcome,
-                "sequence_number": self._audit_seq[0],
-                "instance_id": self._instance_id,
-                "schema_version": CCS_CONTENT_AUDIT_LOG_SCHEMA_VERSION,
-            }
-            try:
-                self._content_audit_log(entry)
-            except Exception:
-                self._audit_seq[0] -= 1
-                raise
