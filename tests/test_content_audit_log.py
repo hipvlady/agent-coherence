@@ -6,9 +6,16 @@
 from __future__ import annotations
 
 import hashlib
+import json
+from uuid import uuid4
 
-from ccs.agent.runtime import CCS_CONTENT_AUDIT_LOG_SCHEMA_VERSION
+import pytest
+
+from ccs.agent.runtime import AgentRuntime, CCS_CONTENT_AUDIT_LOG_SCHEMA_VERSION
+from ccs.coordinator.registry import ArtifactRegistry
+from ccs.coordinator.service import CoordinatorService
 from ccs.core.hashing import compute_content_hash
+from ccs.strategies.lazy import LazyStrategy
 
 
 # ---------------------------------------------------------------------------
@@ -43,3 +50,277 @@ class TestSchemaVersionConstant:
 
     def test_value(self):
         assert CCS_CONTENT_AUDIT_LOG_SCHEMA_VERSION == "ccs.content_audit.v1"
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+AGENT_ID = uuid4()
+ARTIFACT_ID = uuid4()
+INSTANCE_ID = "test-audit-instance"
+
+
+def _audit_runtime(
+    log: list[dict],
+    *,
+    coordinator: CoordinatorService | None = None,
+    agent_id=AGENT_ID,
+    audit_seq: list[int] | None = None,
+) -> AgentRuntime:
+    service = coordinator or CoordinatorService(ArtifactRegistry())
+    return AgentRuntime(
+        agent_id=agent_id,
+        coordinator=service,
+        strategy=LazyStrategy(),
+        content_audit_log=log.append,
+        audit_seq=audit_seq if audit_seq is not None else [0],
+        agent_name="test-agent",
+        instance_id=INSTANCE_ID,
+    )
+
+
+R1_FIELDS = {
+    "tick", "agent_id", "agent_name", "artifact_id", "version",
+    "content_hash", "source", "outcome", "sequence_number",
+    "instance_id", "schema_version",
+}
+
+
+# ---------------------------------------------------------------------------
+# Unit 2: _record_content_view and _record_search_view
+# ---------------------------------------------------------------------------
+
+
+class TestRecordContentView:
+    def test_emits_all_r1_fields(self):
+        log: list[dict] = []
+        rt = _audit_runtime(log)
+        rt._record_content_view(
+            artifact_id=ARTIFACT_ID, version=1, content="hello",
+            source="fetch", now_tick=10,
+        )
+        assert len(log) == 1
+        assert set(log[0].keys()) == R1_FIELDS
+
+    def test_source_matches(self):
+        log: list[dict] = []
+        rt = _audit_runtime(log)
+        for src in ("cache_hit", "fetch", "broadcast", "write"):
+            rt._record_content_view(
+                artifact_id=ARTIFACT_ID, version=1, content="x",
+                source=src, now_tick=1,
+            )
+        sources = [e["source"] for e in log]
+        assert sources == ["cache_hit", "fetch", "broadcast", "write"]
+
+    def test_outcome_content_with_hash(self):
+        log: list[dict] = []
+        rt = _audit_runtime(log)
+        h = rt._record_content_view(
+            artifact_id=ARTIFACT_ID, version=1, content="hello",
+            source="fetch", now_tick=1,
+        )
+        assert log[0]["outcome"] == "content"
+        assert log[0]["content_hash"] == compute_content_hash("hello")
+        assert h == compute_content_hash("hello")
+
+    def test_outcome_content_for_empty_string_at_version_1(self):
+        log: list[dict] = []
+        rt = _audit_runtime(log)
+        h = rt._record_content_view(
+            artifact_id=ARTIFACT_ID, version=1, content="",
+            source="fetch", now_tick=1,
+        )
+        assert log[0]["outcome"] == "content"
+        assert log[0]["content_hash"] == compute_content_hash("")
+        assert log[0]["version"] == 1
+        assert h is not None
+
+    def test_outcome_empty_when_version_none(self):
+        log: list[dict] = []
+        rt = _audit_runtime(log)
+        h = rt._record_content_view(
+            artifact_id=ARTIFACT_ID, version=None, content="",
+            source="fetch", now_tick=1,
+        )
+        assert log[0]["outcome"] == "empty"
+        assert log[0]["version"] is None
+        assert log[0]["content_hash"] is None
+        assert h is None
+
+    def test_outcome_empty_when_version_zero(self):
+        log: list[dict] = []
+        rt = _audit_runtime(log)
+        h = rt._record_content_view(
+            artifact_id=ARTIFACT_ID, version=0, content="",
+            source="fetch", now_tick=1,
+        )
+        assert log[0]["outcome"] == "empty"
+        assert log[0]["version"] is None
+        assert log[0]["content_hash"] is None
+        assert h is None
+
+    def test_outcome_error_when_content_none(self):
+        log: list[dict] = []
+        rt = _audit_runtime(log)
+        h = rt._record_content_view(
+            artifact_id=ARTIFACT_ID, version=1, content=None,
+            source="fetch", now_tick=1,
+        )
+        assert log[0]["outcome"] == "error"
+        assert log[0]["version"] is None
+        assert log[0]["content_hash"] is None
+        assert h is None
+
+    def test_sequence_number_increments(self):
+        log: list[dict] = []
+        rt = _audit_runtime(log)
+        for i in range(3):
+            rt._record_content_view(
+                artifact_id=ARTIFACT_ID, version=1, content="x",
+                source="fetch", now_tick=i,
+            )
+        assert [e["sequence_number"] for e in log] == [1, 2, 3]
+
+    def test_sequence_number_rolls_back_on_exception(self):
+        seq = [0]
+        calls = []
+
+        def failing_log(entry):
+            calls.append(entry)
+            raise RuntimeError("boom")
+
+        rt = AgentRuntime(
+            agent_id=AGENT_ID,
+            coordinator=CoordinatorService(ArtifactRegistry()),
+            strategy=LazyStrategy(),
+            content_audit_log=failing_log,
+            audit_seq=seq,
+            agent_name="test",
+            instance_id=INSTANCE_ID,
+        )
+        with pytest.raises(RuntimeError, match="boom"):
+            rt._record_content_view(
+                artifact_id=ARTIFACT_ID, version=1, content="x",
+                source="fetch", now_tick=1,
+            )
+        assert seq[0] == 0
+
+    def test_no_emission_when_callback_none(self):
+        rt = AgentRuntime(
+            agent_id=AGENT_ID,
+            coordinator=CoordinatorService(ArtifactRegistry()),
+            strategy=LazyStrategy(),
+        )
+        seq_before = rt._audit_seq[0]
+        rt._record_content_view(
+            artifact_id=ARTIFACT_ID, version=1, content="x",
+            source="fetch", now_tick=1,
+        )
+        assert rt._audit_seq[0] == seq_before
+
+    def test_updates_content_by_artifact(self):
+        log: list[dict] = []
+        rt = _audit_runtime(log)
+        rt._record_content_view(
+            artifact_id=ARTIFACT_ID, version=1, content="new",
+            source="fetch", now_tick=1,
+        )
+        assert rt._content_by_artifact[ARTIFACT_ID] == "new"
+
+    def test_cache_hit_skips_dict_write(self):
+        log: list[dict] = []
+        rt = _audit_runtime(log)
+        rt._content_by_artifact[ARTIFACT_ID] = "existing"
+        rt._record_content_view(
+            artifact_id=ARTIFACT_ID, version=1, content="existing",
+            source="cache_hit", now_tick=1,
+        )
+        assert rt._content_by_artifact[ARTIFACT_ID] == "existing"
+        assert len(log) == 1
+
+    def test_tick_matches_now_tick(self):
+        log: list[dict] = []
+        rt = _audit_runtime(log)
+        rt._record_content_view(
+            artifact_id=ARTIFACT_ID, version=1, content="x",
+            source="fetch", now_tick=42,
+        )
+        assert log[0]["tick"] == 42
+
+    def test_agent_fields_match_constructor(self):
+        log: list[dict] = []
+        rt = _audit_runtime(log)
+        rt._record_content_view(
+            artifact_id=ARTIFACT_ID, version=1, content="x",
+            source="fetch", now_tick=1,
+        )
+        assert log[0]["agent_id"] == str(AGENT_ID)
+        assert log[0]["agent_name"] == "test-agent"
+        assert log[0]["instance_id"] == INSTANCE_ID
+        assert log[0]["schema_version"] == CCS_CONTENT_AUDIT_LOG_SCHEMA_VERSION
+
+    def test_records_json_serializable(self):
+        log: list[dict] = []
+        rt = _audit_runtime(log)
+        rt._record_content_view(
+            artifact_id=ARTIFACT_ID, version=1, content="hello",
+            source="fetch", now_tick=1,
+        )
+        roundtrip = json.loads(json.dumps(log[0]))
+        assert roundtrip == log[0]
+
+
+class TestRecordSearchView:
+    def test_emits_source_search(self):
+        log: list[dict] = []
+        rt = _audit_runtime(log)
+        rt._record_search_view(
+            artifact_id=ARTIFACT_ID, version=1, content="hello", now_tick=1,
+        )
+        assert len(log) == 1
+        assert log[0]["source"] == "search"
+        assert set(log[0].keys()) == R1_FIELDS
+
+    def test_does_not_update_content_by_artifact(self):
+        log: list[dict] = []
+        rt = _audit_runtime(log)
+        rt._record_search_view(
+            artifact_id=ARTIFACT_ID, version=1, content="hello", now_tick=1,
+        )
+        assert ARTIFACT_ID not in rt._content_by_artifact
+
+    def test_shares_sequence_counter(self):
+        log: list[dict] = []
+        seq = [0]
+        rt = _audit_runtime(log, audit_seq=seq)
+        rt._record_content_view(
+            artifact_id=ARTIFACT_ID, version=1, content="a",
+            source="fetch", now_tick=1,
+        )
+        rt._record_search_view(
+            artifact_id=ARTIFACT_ID, version=1, content="b", now_tick=2,
+        )
+        assert log[0]["sequence_number"] == 1
+        assert log[1]["sequence_number"] == 2
+
+    def test_no_emission_when_callback_none(self):
+        rt = AgentRuntime(
+            agent_id=AGENT_ID,
+            coordinator=CoordinatorService(ArtifactRegistry()),
+            strategy=LazyStrategy(),
+        )
+        rt._record_search_view(
+            artifact_id=ARTIFACT_ID, version=1, content="x", now_tick=1,
+        )
+        # No exception, no side effects
+
+    def test_json_serializable(self):
+        log: list[dict] = []
+        rt = _audit_runtime(log)
+        rt._record_search_view(
+            artifact_id=ARTIFACT_ID, version=1, content="hello", now_tick=1,
+        )
+        roundtrip = json.loads(json.dumps(log[0]))
+        assert roundtrip == log[0]
