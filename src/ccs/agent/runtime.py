@@ -52,10 +52,18 @@ class AgentRuntime:
 
         touched = self.strategy.on_read(entry, now_tick=now_tick)
         self.cache.put(artifact_id, touched)
+        cached_content = self._content_by_artifact.get(artifact_id, "")
+        self._record_content_view(
+            artifact_id=artifact_id,
+            version=touched.local_version,
+            content=cached_content,
+            source="cache_hit",
+            now_tick=now_tick,
+        )
         return FetchResponse(
             artifact_id=artifact_id,
             version=touched.local_version,
-            content=self._content_by_artifact.get(artifact_id, ""),
+            content=cached_content,
             state_grant=touched.state,
         )
 
@@ -95,7 +103,18 @@ class AgentRuntime:
                 now_tick=now_tick,
             ),
         )
-        self._content_by_artifact[artifact_id] = content
+        computed_hash = self._record_content_view(
+            artifact_id=artifact_id,
+            version=updated.version,
+            content=content,
+            source="write",
+            now_tick=now_tick,
+        )
+        if content_hash is not None and computed_hash is not None and content_hash != computed_hash:
+            raise ValueError(
+                f"content_hash mismatch: caller provided {content_hash!r}, "
+                f"computed {computed_hash!r}"
+            )
         return updated, [*write_signals, *commit_signals]
 
     def handle_invalidation(self, signal: InvalidationSignal) -> None:
@@ -132,7 +151,13 @@ class AgentRuntime:
                 now_tick=now_tick,
             ),
         )
-        self._content_by_artifact[artifact_id] = content
+        self._record_content_view(
+            artifact_id=artifact_id,
+            version=version,
+            content=content,
+            source="broadcast",
+            now_tick=now_tick,
+        )
         self.coordinator.registry.set_agent_state(
             artifact_id, self.agent_id, MESIState.SHARED, trigger="update", tick=now_tick
         )
@@ -162,7 +187,13 @@ class AgentRuntime:
                 now_tick=now_tick,
             ),
         )
-        self._content_by_artifact[artifact_id] = response.content
+        self._record_content_view(
+            artifact_id=artifact_id,
+            version=response.version,
+            content=response.content,
+            source="fetch",
+            now_tick=now_tick,
+        )
         return response
 
     def _record_content_view(

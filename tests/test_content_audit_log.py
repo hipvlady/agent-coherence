@@ -324,3 +324,105 @@ class TestRecordSearchView:
         )
         roundtrip = json.loads(json.dumps(log[0]))
         assert roundtrip == log[0]
+
+
+# ---------------------------------------------------------------------------
+# Unit 3: Wired delivery paths
+# ---------------------------------------------------------------------------
+
+
+class TestWiredCacheHit:
+    def test_cache_hit_emits_audit(self):
+        log: list[dict] = []
+        coordinator = CoordinatorService(ArtifactRegistry())
+        artifact = coordinator.register_artifact(name="doc", content="v1")
+        rt = _audit_runtime(log, coordinator=coordinator)
+        rt.read(artifact.id, now_tick=1)  # fetch
+        log.clear()
+        rt.read(artifact.id, now_tick=2)  # cache hit
+        assert len(log) == 1
+        assert log[0]["source"] == "cache_hit"
+        assert log[0]["tick"] == 2
+
+
+class TestWiredFetch:
+    def test_fetch_emits_audit(self):
+        log: list[dict] = []
+        coordinator = CoordinatorService(ArtifactRegistry())
+        artifact = coordinator.register_artifact(name="doc", content="v1")
+        rt = _audit_runtime(log, coordinator=coordinator)
+        rt.read(artifact.id, now_tick=1)
+        assert len(log) == 1
+        assert log[0]["source"] == "fetch"
+        assert log[0]["tick"] == 1
+        assert log[0]["version"] == 1
+
+
+class TestWiredBroadcast:
+    def test_broadcast_emits_audit(self):
+        log: list[dict] = []
+        coordinator = CoordinatorService(ArtifactRegistry())
+        artifact = coordinator.register_artifact(name="doc", content="v1")
+        rt = _audit_runtime(log, coordinator=coordinator)
+        rt.handle_update(
+            artifact_id=artifact.id, version=2, content="v2", now_tick=5,
+        )
+        assert len(log) == 1
+        assert log[0]["source"] == "broadcast"
+        assert log[0]["tick"] == 5
+        assert log[0]["version"] == 2
+
+
+class TestWiredWrite:
+    def test_write_emits_audit(self):
+        log: list[dict] = []
+        coordinator = CoordinatorService(ArtifactRegistry())
+        artifact = coordinator.register_artifact(name="doc", content="v1")
+        rt = _audit_runtime(log, coordinator=coordinator)
+        rt.read(artifact.id, now_tick=1)
+        log.clear()
+        rt.write(artifact.id, content="v2", now_tick=2)
+        write_records = [e for e in log if e["source"] == "write"]
+        assert len(write_records) == 1
+        assert write_records[0]["version"] == 2
+
+    def test_write_valid_hash_succeeds(self):
+        log: list[dict] = []
+        coordinator = CoordinatorService(ArtifactRegistry())
+        artifact = coordinator.register_artifact(name="doc", content="v1")
+        rt = _audit_runtime(log, coordinator=coordinator)
+        rt.read(artifact.id, now_tick=1)
+        correct_hash = compute_content_hash("v2")
+        rt.write(artifact.id, content="v2", now_tick=2, content_hash=correct_hash)
+
+    def test_write_mismatched_hash_raises(self):
+        log: list[dict] = []
+        coordinator = CoordinatorService(ArtifactRegistry())
+        artifact = coordinator.register_artifact(name="doc", content="v1")
+        rt = _audit_runtime(log, coordinator=coordinator)
+        rt.read(artifact.id, now_tick=1)
+        with pytest.raises(ValueError, match="content_hash mismatch"):
+            rt.write(artifact.id, content="v2", now_tick=2, content_hash="wrong")
+
+
+class TestEndToEndAuditCycle:
+    def test_read_write_broadcast_sequence(self):
+        log: list[dict] = []
+        seq = [0]
+        coordinator = CoordinatorService(ArtifactRegistry())
+        artifact = coordinator.register_artifact(name="doc", content="v1")
+        rt_a = _audit_runtime(log, coordinator=coordinator, agent_id=uuid4(), audit_seq=seq)
+        rt_b = _audit_runtime(log, coordinator=coordinator, agent_id=uuid4(), audit_seq=seq)
+
+        rt_a.read(artifact.id, now_tick=1)  # fetch
+        rt_b.read(artifact.id, now_tick=1)  # fetch
+        rt_a.read(artifact.id, now_tick=2)  # cache hit
+        rt_b.handle_update(artifact_id=artifact.id, version=2, content="v2", now_tick=3)
+
+        sources = [e["source"] for e in log]
+        assert "fetch" in sources
+        assert "cache_hit" in sources
+        assert "broadcast" in sources
+        seq_nums = [e["sequence_number"] for e in log]
+        assert seq_nums == sorted(seq_nums)
+        assert len(set(seq_nums)) == len(seq_nums)  # no duplicates
