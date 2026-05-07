@@ -15,6 +15,8 @@ from ccs.strategies.base import SyncStrategy
 
 from .cache import ArtifactCache
 
+CCS_CONTENT_AUDIT_LOG_SCHEMA_VERSION = "ccs.content_audit.v1"
+
 
 class AgentRuntime:
     """Reusable protocol participant for one agent identity."""
