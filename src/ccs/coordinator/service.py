@@ -8,6 +8,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from ccs.core.exceptions import CoherenceError
+from ccs.core.hashing import compute_content_hash
 from ccs.core.invariants import check_monotonic_version, check_single_writer
 from ccs.core.states import MESIState, TransientState
 from ccs.core.types import Artifact, FetchRequest, FetchResponse, InvalidationSignal
@@ -195,7 +196,11 @@ class CoordinatorService:
                     issuer_agent_id=agent_id,
                 )
             )
-        self.registry.set_agent_state(artifact_id, agent_id, MESIState.MODIFIED, trigger="commit", tick=issued_at_tick)
+        commit_hash = content_hash if content_hash is not None else compute_content_hash(content)
+        self.registry.set_agent_state(
+            artifact_id, agent_id, MESIState.MODIFIED,
+            trigger="commit", tick=issued_at_tick, content_hash=commit_hash,
+        )
         self.registry.clear_agent_transient(artifact_id, agent_id)
         self._validate_single_writer(artifact_id)
         return updated, signals
