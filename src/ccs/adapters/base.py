@@ -39,10 +39,21 @@ class CoherenceAdapterCore:
         event_bus: InMemoryEventBus | None = None,
         state_log: Callable[[dict[str, Any]], None] | None = None,
         instance_id: str | None = None,
+        content_audit_log: Callable[[dict[str, Any]], None] | None = None,
+        audit_seq: list[int] | None = None,
+        retain_versions: bool = False,
         **strategy_kwargs: Any,
     ) -> None:
         self._agent_names: dict[UUID, str] = {}
-        self.registry = ArtifactRegistry(state_log=state_log, agent_names=self._agent_names, instance_id=instance_id)
+        self._instance_id = instance_id
+        self._content_audit_log = content_audit_log
+        self._audit_seq = audit_seq
+        self.registry = ArtifactRegistry(
+            state_log=state_log,
+            agent_names=self._agent_names,
+            instance_id=instance_id,
+            retain_versions=retain_versions,
+        )
         self.coordinator = CoordinatorService(self.registry)
         self.strategy: SyncStrategy = build_strategy(
             strategy_name,
@@ -60,7 +71,15 @@ class CoherenceAdapterCore:
 
         agent_id = uuid5(NAMESPACE_URL, f"ccs-agent:{name}")
         self._agent_names[agent_id] = name
-        runtime = AgentRuntime(agent_id=agent_id, coordinator=self.coordinator, strategy=self.strategy)
+        runtime = AgentRuntime(
+            agent_id=agent_id,
+            coordinator=self.coordinator,
+            strategy=self.strategy,
+            content_audit_log=self._content_audit_log,
+            audit_seq=self._audit_seq,
+            agent_name=name,
+            instance_id=self._instance_id,
+        )
         self.event_bus.subscribe(
             agent_id=agent_id,
             on_invalidation=runtime.handle_invalidation,

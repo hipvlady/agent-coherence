@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 from ccs.core.states import MESIState, TransientState
 from ccs.core.types import Artifact
 
-CCS_STATE_LOG_SCHEMA_VERSION = "ccs.state_log.v1"
+CCS_STATE_LOG_SCHEMA_VERSION = "ccs.state_log.v2"
 
 
 @dataclass
@@ -25,6 +25,7 @@ class ArtifactRecord:
     transient_by_agent: dict[UUID, TransientState] = field(default_factory=dict)
     transient_tick_by_agent: dict[UUID, int] = field(default_factory=dict)
     last_writer: Optional[UUID] = None
+    version_history: dict[int, str] = field(default_factory=dict)
 
 
 class ArtifactRegistry:
@@ -36,6 +37,7 @@ class ArtifactRegistry:
         state_log: Callable[[dict[str, Any]], None] | None = None,
         agent_names: dict[UUID, str] | None = None,
         instance_id: str | None = None,
+        retain_versions: bool = False,
     ) -> None:
         if state_log is not None and instance_id is None:
             raise ValueError(
@@ -47,10 +49,14 @@ class ArtifactRegistry:
         self._agent_names = agent_names
         self._instance_id: str = instance_id if instance_id is not None else str(uuid4())
         self._seq: int = 0
+        self._retain_versions = retain_versions
 
     def register_artifact(self, artifact: Artifact, content: str) -> None:
         """Insert artifact record into registry."""
-        self._records[artifact.id] = ArtifactRecord(artifact=artifact, content=content)
+        record = ArtifactRecord(artifact=artifact, content=content)
+        if self._retain_versions:
+            record.version_history[artifact.version] = content
+        self._records[artifact.id] = record
 
     def has_artifact(self, artifact_id: UUID) -> bool:
         """Return whether an artifact exists in registry."""
@@ -79,9 +85,18 @@ class ArtifactRegistry:
         last_writer: Optional[UUID] = None,
     ) -> None:
         """Replace artifact metadata/content for an existing record."""
+        if self._retain_versions:
+            self._records[artifact_id].version_history[artifact.version] = content
         self._records[artifact_id].artifact = artifact
         self._records[artifact_id].content = content
         self._records[artifact_id].last_writer = last_writer
+
+    def get_content_at_version(self, artifact_id: UUID, version: int) -> str | None:
+        """Return content for a specific version, if retained."""
+        record = self._records.get(artifact_id)
+        if record is None:
+            return None
+        return record.version_history.get(version)
 
     def get_state_map(self, artifact_id: UUID) -> dict[UUID, MESIState]:
         """Return copy of per-agent MESI states for an artifact."""
@@ -99,6 +114,7 @@ class ArtifactRegistry:
         *,
         trigger: str = "unknown",
         tick: int = 0,
+        content_hash: str | None = None,
     ) -> None:
         """Set MESI state for one agent/artifact pair."""
         from_state = self._records[artifact_id].state_by_agent.get(agent_id, MESIState.INVALID)
@@ -114,6 +130,7 @@ class ArtifactRegistry:
                 "to_state": state.name,
                 "trigger": trigger,
                 "version": self._records[artifact_id].artifact.version,
+                "content_hash": content_hash,
                 "sequence_number": self._seq,
                 "instance_id": self._instance_id,
                 "schema_version": CCS_STATE_LOG_SCHEMA_VERSION,

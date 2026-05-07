@@ -234,6 +234,60 @@ on the rest of the CCS dependency surface.
 
 ---
 
+## Content audit log
+
+Pass `content_audit_log` to record every content delivery — what each agent actually saw,
+when, and from which source. While `state_log` tracks MESI state transitions, the audit
+log tracks content flow: cache hits, fetches, broadcasts, writes, and searches.
+
+```python
+audit = []
+store = CCSStore(strategy="lazy", content_audit_log=audit.append)
+
+# ... run your graph ...
+
+# Each entry records one content delivery
+for entry in audit:
+    print(f"{entry['agent_name']} saw artifact {entry['artifact_id']} "
+          f"via {entry['source']} (v{entry['version']})")
+```
+
+Enabling `content_audit_log` also enables version retention — the registry keeps a copy
+of each artifact version so historical content can be retrieved for replay or debugging.
+
+### Audit entry schema
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tick` | `int` | Monotonic operation counter |
+| `agent_id` | `str \| None` | UUID of the receiving agent; `None` for search records |
+| `agent_name` | `str \| None` | Agent display name; `None` for search records |
+| `artifact_id` | `str` | UUID of the artifact |
+| `version` | `int \| None` | Artifact version at delivery; `None` on error |
+| `content_hash` | `str \| None` | SHA-256 of the delivered content; `None` on error |
+| `source` | `str` | `"cache_hit"`, `"fetch"`, `"broadcast"`, `"write"`, or `"search"` |
+| `outcome` | `str` | `"content"`, `"empty"`, or `"error"` |
+| `sequence_number` | `int` | Gap-free counter shared across all agents and sources |
+| `instance_id` | `str` | Session identifier; matches `state_log` entries |
+| `schema_version` | `str` | `"ccs.content_audit.v1"` |
+
+### Source types
+
+| `source` | Fires when |
+|----------|-----------|
+| `"cache_hit"` | Agent reads from its local cache (no coordinator round-trip) |
+| `"fetch"` | Agent fetches from the coordinator (cache miss or refresh) |
+| `"broadcast"` | Agent receives content pushed by a peer write (broadcast strategy) |
+| `"write"` | Agent commits new content |
+| `"search"` | Content returned via `SearchOp`; agent identity unknown |
+
+### Cross-validation with state log
+
+When both `content_audit_log` and `state_log` are enabled, `instance_id` is shared and
+`content_hash` on write audit entries matches the corresponding state log commit entry.
+
+---
+
 ## Inline benchmark mode
 
 Measure token savings on your own workload without any external tooling:
@@ -472,7 +526,7 @@ inline benchmarking without the CLI, see [Inline benchmark mode](#inline-benchma
 
 ## API reference
 
-### `CCSStore(strategy, benchmark, on_metric, telemetry, on_error, state_log, **strategy_kwargs)`
+### `CCSStore(strategy, benchmark, on_metric, telemetry, on_error, state_log, content_audit_log, **strategy_kwargs)`
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -482,6 +536,7 @@ inline benchmarking without the CLI, see [Inline benchmark mode](#inline-benchma
 | `telemetry` | `str \| TelemetryExporter \| None` | `None` | `"opentelemetry"`, `"langsmith"`, a `TelemetryExporter` instance, or `None` |
 | `on_error` | `str` | `"strict"` | `"strict"` to propagate `CoherenceError`; `"degrade"` to fall back silently |
 | `state_log` | `Callable[[dict], None] \| None` | `None` | Callback fired on every stable MESI state transition; see [State transitions log](#state-transitions-log) |
+| `content_audit_log` | `Callable[[dict], None] \| None` | `None` | Callback fired on every content delivery; see [Content audit log](#content-audit-log). Enables version retention. |
 | `**strategy_kwargs` | `Any` | — | Forwarded to the strategy constructor (`lease_ticks`, `threshold`, etc.) |
 
 ### Public imports

@@ -202,7 +202,7 @@ def test_schema_version_on_every_state_log_entry() -> None:
     artifact = Artifact(name="x", version=1)
     reg.register_artifact(artifact, "")
     reg.set_agent_state(artifact.id, uuid4(), MESIState.EXCLUSIVE, tick=1)
-    assert log[0]["schema_version"] == "ccs.state_log.v1"
+    assert log[0]["schema_version"] == "ccs.state_log.v2"
     assert log[0]["schema_version"] == CCS_STATE_LOG_SCHEMA_VERSION
 
 
@@ -488,3 +488,53 @@ def test_version_increments_across_commits() -> None:
     v2_versions = {e["version"] for e in log}
 
     assert max(v2_versions) > max(v1_versions)
+
+
+# ---------------------------------------------------------------------------
+# Unit 5: content_hash in state log on commit (R10)
+# ---------------------------------------------------------------------------
+
+def test_commit_entry_includes_content_hash() -> None:
+    log: list[dict] = []
+    svc = _service_with_log(log)
+    artifact = _register(svc)
+    agent_a = uuid4()
+
+    svc.fetch(FetchRequest(artifact_id=artifact.id, requesting_agent_id=agent_a, requested_at_tick=1))
+    log.clear()
+    svc.commit(agent_id=agent_a, artifact_id=artifact.id, content="v2", issued_at_tick=2)
+
+    commit_entries = [e for e in log if e["trigger"] == "commit"]
+    assert len(commit_entries) == 1
+    from ccs.core.hashing import compute_content_hash
+    assert commit_entries[0]["content_hash"] == compute_content_hash("v2")
+
+
+def test_non_commit_entries_have_null_content_hash() -> None:
+    log: list[dict] = []
+    svc = _service_with_log(log)
+    artifact = _register(svc)
+    agent_a = uuid4()
+
+    svc.fetch(FetchRequest(artifact_id=artifact.id, requesting_agent_id=agent_a, requested_at_tick=1))
+
+    fetch_entries = [e for e in log if e["trigger"] == "fetch"]
+    for entry in fetch_entries:
+        assert entry["content_hash"] is None
+
+
+def test_state_log_schema_version_is_v2() -> None:
+    assert CCS_STATE_LOG_SCHEMA_VERSION == "ccs.state_log.v2"
+
+
+def test_content_hash_field_present_in_all_entries() -> None:
+    log: list[dict] = []
+    svc = _service_with_log(log)
+    artifact = _register(svc)
+    agent_a = uuid4()
+
+    svc.fetch(FetchRequest(artifact_id=artifact.id, requesting_agent_id=agent_a, requested_at_tick=1))
+    svc.commit(agent_id=agent_a, artifact_id=artifact.id, content="v2", issued_at_tick=2)
+
+    for entry in log:
+        assert "content_hash" in entry

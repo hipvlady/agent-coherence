@@ -29,7 +29,9 @@ from langgraph.store.base import (
 from ccs.adapters.base import CoherenceAdapterCore
 from ccs.adapters.events import CCS_METRIC_SCHEMA_VERSION, StoreMetricEvent  # re-exported for public API compatibility
 from ccs.adapters.telemetry import TelemetryExporter, build_telemetry
+from ccs.agent.runtime import CCS_CONTENT_AUDIT_LOG_SCHEMA_VERSION
 from ccs.core.exceptions import CoherenceError
+from ccs.core.hashing import compute_content_hash
 from ccs.core.states import MESIState
 from ccs.core.types import Artifact
 
@@ -63,6 +65,7 @@ class CCSStore(BaseStore):
         on_error: str = "strict",
         benchmark: bool = False,
         state_log: Callable[[dict[str, Any]], None] | None = None,
+        content_audit_log: Callable[[dict[str, Any]], None] | None = None,
         **strategy_kwargs: Any,
     ) -> None:
         if on_error not in ("strict", "degrade"):
@@ -71,7 +74,17 @@ class CCSStore(BaseStore):
             raise TypeError(f"benchmark must be a bool; got {type(benchmark).__name__!r}")
         self._instance_id = str(uuid.uuid4())
         self._metric_seq: int = 0
-        self.core = CoherenceAdapterCore(strategy_name=strategy, state_log=state_log, instance_id=self._instance_id, **strategy_kwargs)
+        self._content_audit_log = content_audit_log
+        self._audit_seq: list[int] = [0]
+        self.core = CoherenceAdapterCore(
+            strategy_name=strategy,
+            state_log=state_log,
+            instance_id=self._instance_id,
+            content_audit_log=content_audit_log,
+            audit_seq=self._audit_seq,
+            retain_versions=content_audit_log is not None,
+            **strategy_kwargs,
+        )
         self._on_metric = on_metric
         self._telemetry: TelemetryExporter = build_telemetry(telemetry)
         self._on_error = on_error
@@ -144,37 +157,35 @@ class CCSStore(BaseStore):
         self._ensure_agent_registered(agent_name)
 
         entry = self.core.runtime(agent_name).cache.get(artifact_id)
-        cache_hit = entry is not None and entry.state in (
+        was_cache_hit = entry is not None and entry.state in (
             MESIState.SHARED,
             MESIState.EXCLUSIVE,
             MESIState.MODIFIED,
         )
 
         degraded = False
-        if cache_hit:
-            raw = self.core.runtime(agent_name).content(artifact_id)
-            value = json.loads(raw) if raw else {}
-        else:
-            try:
-                resp = self.core.read(agent_name=agent_name, artifact_id=artifact_id, now_tick=tick)
-                value = json.loads(resp.content) if resp.content else {}
-            except CoherenceError as exc:
-                if self._on_error == "strict":
-                    raise
-                logger.warning(
-                    "CCSStore: coherence error on get %r %r — degrading to fallback: %s",
-                    namespace, key, exc,
+        try:
+            resp = self.core.read(agent_name=agent_name, artifact_id=artifact_id, now_tick=tick)
+            value = json.loads(resp.content) if resp.content else {}
+            cache_hit = was_cache_hit
+        except CoherenceError as exc:
+            if self._on_error == "strict":
+                raise
+            logger.warning(
+                "CCSStore: coherence error on get %r %r — degrading to fallback: %s",
+                namespace, key, exc,
+            )
+            scope_key = (tuple(namespace[1:]), key)
+            value = self._fallback_store.get(scope_key, {})
+            degraded = True
+            cache_hit = False
+            if self._degradation_count == 0:
+                warnings.warn(
+                    f"CCSStore degraded to fallback on get {namespace!r} {key!r}: {exc}",
+                    CoherenceDegradedWarning,
+                    stacklevel=4,
                 )
-                scope_key = (tuple(namespace[1:]), key)
-                value = self._fallback_store.get(scope_key, {})
-                degraded = True
-                if self._degradation_count == 0:
-                    warnings.warn(
-                        f"CCSStore degraded to fallback on get {namespace!r} {key!r}: {exc}",
-                        CoherenceDegradedWarning,
-                        stacklevel=4,
-                    )
-                self._degradation_count += 1
+            self._degradation_count += 1
 
         tokens = 1 if cache_hit else self._estimate_tokens(value)
         # Cache hit: no content was fetched from the coordinator, so transmission cost is 0.
@@ -346,6 +357,29 @@ class CCSStore(BaseStore):
                     tokens_consumed=self._estimate_tokens(value),
                     cache_hit=False,
                 )
+
+                if self._content_audit_log is not None:
+                    artifact_meta = self.core.registry.get_artifact(artifact_id)
+                    record_version = artifact_meta.version if artifact_meta else None
+                    content_hash = compute_content_hash(raw) if raw is not None else None
+                    self._audit_seq[0] += 1
+                    try:
+                        self._content_audit_log({
+                            "tick": tick,
+                            "agent_id": None,
+                            "agent_name": None,
+                            "artifact_id": str(artifact_id),
+                            "version": record_version,
+                            "content_hash": content_hash,
+                            "source": "search",
+                            "outcome": "error",
+                            "sequence_number": self._audit_seq[0],
+                            "instance_id": self._instance_id,
+                            "schema_version": CCS_CONTENT_AUDIT_LOG_SCHEMA_VERSION,
+                        })
+                    except Exception:
+                        self._audit_seq[0] -= 1
+                        raise
 
         return results[op.offset : op.offset + op.limit]
 
