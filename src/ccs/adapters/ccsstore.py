@@ -157,37 +157,35 @@ class CCSStore(BaseStore):
         self._ensure_agent_registered(agent_name)
 
         entry = self.core.runtime(agent_name).cache.get(artifact_id)
-        cache_hit = entry is not None and entry.state in (
+        was_cache_hit = entry is not None and entry.state in (
             MESIState.SHARED,
             MESIState.EXCLUSIVE,
             MESIState.MODIFIED,
         )
 
         degraded = False
-        if cache_hit:
-            raw = self.core.runtime(agent_name).content(artifact_id)
-            value = json.loads(raw) if raw else {}
-        else:
-            try:
-                resp = self.core.read(agent_name=agent_name, artifact_id=artifact_id, now_tick=tick)
-                value = json.loads(resp.content) if resp.content else {}
-            except CoherenceError as exc:
-                if self._on_error == "strict":
-                    raise
-                logger.warning(
-                    "CCSStore: coherence error on get %r %r — degrading to fallback: %s",
-                    namespace, key, exc,
+        try:
+            resp = self.core.read(agent_name=agent_name, artifact_id=artifact_id, now_tick=tick)
+            value = json.loads(resp.content) if resp.content else {}
+            cache_hit = was_cache_hit
+        except CoherenceError as exc:
+            if self._on_error == "strict":
+                raise
+            logger.warning(
+                "CCSStore: coherence error on get %r %r — degrading to fallback: %s",
+                namespace, key, exc,
+            )
+            scope_key = (tuple(namespace[1:]), key)
+            value = self._fallback_store.get(scope_key, {})
+            degraded = True
+            cache_hit = False
+            if self._degradation_count == 0:
+                warnings.warn(
+                    f"CCSStore degraded to fallback on get {namespace!r} {key!r}: {exc}",
+                    CoherenceDegradedWarning,
+                    stacklevel=4,
                 )
-                scope_key = (tuple(namespace[1:]), key)
-                value = self._fallback_store.get(scope_key, {})
-                degraded = True
-                if self._degradation_count == 0:
-                    warnings.warn(
-                        f"CCSStore degraded to fallback on get {namespace!r} {key!r}: {exc}",
-                        CoherenceDegradedWarning,
-                        stacklevel=4,
-                    )
-                self._degradation_count += 1
+            self._degradation_count += 1
 
         tokens = 1 if cache_hit else self._estimate_tokens(value)
         # Cache hit: no content was fetched from the coordinator, so transmission cost is 0.
