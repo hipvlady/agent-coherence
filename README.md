@@ -5,6 +5,7 @@ When two agents share state, one of them is usually reading a stale copy. `agent
 [![CI](https://github.com/hipvlady/agent-coherence/actions/workflows/ci.yml/badge.svg)](https://github.com/hipvlady/agent-coherence/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/agent-coherence)](https://pypi.org/project/agent-coherence/)
 [![arXiv](https://img.shields.io/badge/arXiv-2603.15183-b31b1b)](https://arxiv.org/abs/2603.15183)
+[![Discussions](https://img.shields.io/github/discussions/hipvlady/agent-coherence)](https://github.com/hipvlady/agent-coherence/discussions)
 
 ```bash
 pip install "agent-coherence[langgraph]"
@@ -157,6 +158,10 @@ CCSStore tracks every read and write through MESI state transitions — the trac
 who-saw-what is already in the system, even without a UI for it. If you've hit a
 stale-read bug in a multi-agent workflow, I'd like to hear about it —
 [open an issue](https://github.com/hipvlady/agent-coherence/issues/new).
+
+## Community
+
+Questions, war stories, and ideas welcome in [Discussions](https://github.com/hipvlady/agent-coherence/discussions).
 
 ## License
 

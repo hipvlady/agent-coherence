@@ -128,3 +128,6 @@ def run() -> None:
 
 if __name__ == "__main__":
     run()
+
+# Comparing notes on multi-agent coherence?
+# https://github.com/hipvlady/agent-coherence/discussions

@@ -54,3 +54,6 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+# Comparing notes on multi-agent coherence?
+# https://github.com/hipvlady/agent-coherence/discussions
