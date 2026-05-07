@@ -426,3 +426,46 @@ class TestEndToEndAuditCycle:
         seq_nums = [e["sequence_number"] for e in log]
         assert seq_nums == sorted(seq_nums)
         assert len(set(seq_nums)) == len(seq_nums)  # no duplicates
+
+
+# ---------------------------------------------------------------------------
+# Unit 7: Opt-in version retention in ArtifactRegistry
+# ---------------------------------------------------------------------------
+
+from ccs.core.types import Artifact
+
+
+class TestVersionRetention:
+    def test_retain_versions_stores_history(self):
+        reg = ArtifactRegistry(retain_versions=True)
+        artifact_v1 = Artifact(name="doc", version=1)
+        reg.register_artifact(artifact_v1, "content-v1")
+        artifact_v2 = Artifact(id=artifact_v1.id, name="doc", version=2)
+        reg.set_artifact_and_content(artifact_v1.id, artifact_v2, "content-v2")
+
+        assert reg.get_content_at_version(artifact_v1.id, 1) == "content-v1"
+        assert reg.get_content_at_version(artifact_v1.id, 2) == "content-v2"
+
+    def test_default_no_retention(self):
+        reg = ArtifactRegistry()
+        artifact_v1 = Artifact(name="doc", version=1)
+        reg.register_artifact(artifact_v1, "content-v1")
+        artifact_v2 = Artifact(id=artifact_v1.id, name="doc", version=2)
+        reg.set_artifact_and_content(artifact_v1.id, artifact_v2, "content-v2")
+
+        assert reg.get_content_at_version(artifact_v1.id, 1) is None
+        assert reg.get_content_at_version(artifact_v1.id, 2) is None
+
+    def test_get_content_returns_latest(self):
+        reg = ArtifactRegistry(retain_versions=True)
+        artifact_v1 = Artifact(name="doc", version=1)
+        reg.register_artifact(artifact_v1, "content-v1")
+        artifact_v2 = Artifact(id=artifact_v1.id, name="doc", version=2)
+        reg.set_artifact_and_content(artifact_v1.id, artifact_v2, "content-v2")
+
+        assert reg.get_content(artifact_v1.id) == "content-v2"
+
+    def test_version_history_empty_on_new_record(self):
+        from ccs.coordinator.registry import ArtifactRecord
+        record = ArtifactRecord(artifact=Artifact(name="x", version=1), content="c")
+        assert record.version_history == {}
