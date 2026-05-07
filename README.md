@@ -126,11 +126,13 @@ summary. Use `--initial-state '{"key": "value"}'` to pass a custom input dict.
 
 ## Status
 
-`v0.4` released. See [releases](https://github.com/hipvlady/agent-coherence/releases) for
+`v0.5` released. See [releases](https://github.com/hipvlady/agent-coherence/releases) for
 full history. Alpha — APIs may change before `v1.0`.
 
-**What's new in v0.4:** sequence-numbered event streams and `validate_log` for replay
-correctness checks.
+**What's new in v0.5:** per-agent content audit log — opt-in callback recording every
+content delivery (cache hit, fetch, broadcast, write, search) with SHA-256 content hashes,
+gap-free sequence numbers, and cross-validated state log entries. Pass
+`content_audit_log=callback` to `CCSStore` to enable.
 
 ## Paper
 
@@ -154,10 +156,11 @@ arXiv:[2603.15183](https://arxiv.org/abs/2603.15183)
 </details>
 
 Debugging multi-agent failures often comes down to which agent saw what state when.
-CCSStore tracks every read and write through MESI state transitions — the trace of
-who-saw-what is already in the system, even without a UI for it. If you've hit a
-stale-read bug in a multi-agent workflow, I'd like to hear about it —
-[open an issue](https://github.com/hipvlady/agent-coherence/issues/new).
+`CCSStore(content_audit_log=my_callback)` records every content delivery — cache hits,
+fetches, broadcasts, writes, and searches — with SHA-256 hashes and gap-free sequence
+numbers. The state log tracks MESI transitions; the audit log tracks what content each
+agent actually saw. If you've hit a stale-read bug in a multi-agent workflow, I'd like
+to hear about it — [open an issue](https://github.com/hipvlady/agent-coherence/issues/new).
 
 ## Community
 
